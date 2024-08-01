@@ -327,10 +327,17 @@ pub struct $type_name$Entity {
 
 #[generate_trait]
 pub impl $type_name$EntityStoreImpl of $type_name$EntityStore {
-    fn get_entity(self: @dojo::world::IWorldDispatcher, entity_id: felt252) -> $type_name$Entity {
-        $type_name$ModelEntityImpl::get(*self, entity_id)
+    fn get_entity(self: @dojo::world::IWorldDispatcher, $param_keys$) -> $type_name$Entity {
+        let mut serialized = core::array::ArrayTrait::new();
+        $serialized_param_keys$
+        let id = core::poseidon::poseidon_hash_span(serialized.span());
+        $type_name$ModelEntityImpl::get(*self, id)
     }
 
+    fn get_entity_from_id(self: @dojo::world::IWorldDispatcher, entity_id: felt252) -> $type_name$Entity {
+        $type_name$ModelEntityImpl::get(*self, entity_id)
+    }
+    
     $entity_field_accessors$
 }
 
