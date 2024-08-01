@@ -327,8 +327,8 @@ pub struct $type_name$Entity {
 
 #[generate_trait]
 pub impl $type_name$EntityStoreImpl of $type_name$EntityStore {
-    fn get(world: dojo::world::IWorldDispatcher, entity_id: felt252) -> $type_name$Entity {
-        $type_name$ModelEntityImpl::get(world, entity_id)
+    fn get_entity(self: @dojo::world::IWorldDispatcher, entity_id: felt252) -> $type_name$Entity {
+        $type_name$ModelEntityImpl::get(*self, entity_id)
     }
 
     $entity_field_accessors$
