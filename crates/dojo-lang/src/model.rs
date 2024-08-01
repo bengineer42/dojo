@@ -360,11 +360,11 @@ pub impl $type_name$StoreImpl of $type_name$Store {
         core::option::OptionTrait::<$type_name$>::unwrap(entity)
     }
 
-    fn get(world: dojo::world::IWorldDispatcher, $param_keys$) -> $type_name$ {
+    fn get(self: @dojo::world::IWorldDispatcher, $param_keys$) -> $type_name$ {
         let mut serialized = core::array::ArrayTrait::new();
         $serialized_param_keys$
 
-        dojo::model::Model::<$type_name$>::get(world, serialized.span())
+        dojo::model::Model::<$type_name$>::get(*self, serialized.span())
     }
 
     $field_accessors$
