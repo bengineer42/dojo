@@ -254,8 +254,9 @@ pub fn handle_model_struct(
 
     let mut members: Vec<Member> = vec![];
     let mut members_values: Vec<RewriteNode> = vec![];
-    let mut param_keys: Vec<String> = vec![];
     let mut serialized_keys: Vec<RewriteNode> = vec![];
+    let mut key_names_vec: Vec<String> = vec![];
+    let mut key_type_vec: Vec<String> = vec![];
     let mut serialized_param_keys: Vec<RewriteNode> = vec![];
     let mut serialized_values: Vec<RewriteNode> = vec![];
     let mut field_accessors: Vec<RewriteNode> = vec![];
@@ -272,8 +273,10 @@ pub fn handle_model_struct(
         if member.key {
             validate_key_member(&member, db, member_ast, &mut diagnostics);
             serialized_keys.push(serialize_member_ty(&member, true));
+            key_names_vec.push(member.name.clone());
+            key_type_vec.push(member.ty.clone());
+
             serialized_param_keys.push(serialize_member_ty(&member, false));
-            param_keys.push(format!("{}: {}", member.name, member.ty));
         } else {
             serialized_values.push(serialize_member_ty(&member, true));
             members_values
@@ -282,16 +285,22 @@ pub fn handle_model_struct(
 
         members.push(member);
     });
-    let param_keys = param_keys.join(", ");
+    let key_names_csv = key_names_vec.join(", ");
+    let key_type_csv = key_type_vec.join(", ");
+
+    let (key_object, key_type) = if key_names_vec.len() > 1 {
+        (format!("({})", key_names_csv), format!("({})", key_type_csv))
+    } else {
+        (key_names_csv.clone(), key_type_csv.clone())
+    };
+    let expand_keys = format!("let {} = key;", key_object);
 
     members.iter().filter(|m| !m.key).for_each(|member| {
         field_accessors.push(generate_field_accessors(
             model_name.clone(),
-            param_keys.clone(),
-            serialized_param_keys.clone(),
+            key_type.clone(),
             member,
         ));
-        entity_field_accessors.push(generate_entity_field_accessors(model_name.clone(), member));
     });
 
     if serialized_keys.is_empty() {
@@ -319,37 +328,26 @@ pub fn handle_model_struct(
     (
         RewriteNode::interpolate_patched(
             "
+
+const $MODEL_NAME_SNAKE$_SELECTOR = $model_selector$;
+
 #[derive(Drop, Serde)]
 pub struct $type_name$Entity {
     __id: felt252, // private field
     $members_values$
 }
 
-#[generate_trait]
-pub impl $type_name$EntityStoreImpl of $type_name$EntityStore {
-    fn get_entity(self: @dojo::world::IWorldDispatcher, $param_keys$) -> $type_name$Entity {
+pub impl $type_name$Store of WorldStore{
+    fn serialize_key(key: $key_type$) -> Array<felt252> {
+        $expand_keys$
         let mut serialized = core::array::ArrayTrait::new();
         $serialized_param_keys$
-        let id = core::poseidon::poseidon_hash_span(serialized.span());
-        $type_name$ModelEntityImpl::get(*self, id)
+        serialized
     }
-
-    fn get_entity_from_id(self: @dojo::world::IWorldDispatcher, entity_id: felt252) -> $type_name$Entity {
-        $type_name$ModelEntityImpl::get(*self, entity_id)
+    fn key_to_id(key: $key_type$) -> felt252 {
+        core::poseidon::poseidon_hash_span(Self::serialize_key(key).span())
     }
-    
-    $entity_field_accessors$
-}
-
-#[generate_trait]
-pub impl $type_name$StoreImpl of $type_name$Store {
-    fn entity_id_from_keys($param_keys$) -> felt252 {
-        let mut serialized = core::array::ArrayTrait::new();
-        $serialized_param_keys$
-        core::poseidon::poseidon_hash_span(serialized.span())
-    }
-
-    fn from_values(ref keys: Span<felt252>, ref values: Span<felt252>) -> $type_name$ {
+    fn from_values(ref keys: Span<felt252>, ref values: Span<felt252>) -> $type_name${
         let mut serialized = core::array::ArrayTrait::new();
         serialized.append_span(keys);
         serialized.append_span(values);
@@ -359,21 +357,37 @@ pub impl $type_name$StoreImpl of $type_name$Store {
 
         if core::option::OptionTrait::<$type_name$>::is_none(@entity) {
             panic!(
-                \"Model `$type_name$`: deserialization failed. Ensure the length of the keys tuple \
-             is matching the number of #[key] fields in the model struct.\"
-            );
-        }
-
-        core::option::OptionTrait::<$type_name$>::unwrap(entity)
+                \"Model `$type_name$`: deserialization failed. Ensure the length of the keys tuple is matching the number of #[key] fields in the model struct.\"
+        );
     }
 
-    fn get(self: @dojo::world::IWorldDispatcher, $param_keys$) -> $type_name$ {
-        let mut serialized = core::array::ArrayTrait::new();
-        $serialized_param_keys$
-
-        dojo::model::Model::<$type_name$>::get(*self, serialized.span())
+    core::option::OptionTrait::<$type_name$>::unwrap(entity)
     }
+    fn get<$type_name$, $key_type$>(self: @IWorldDispatcher, key: $key_type$) -> $type_name$ {
+        dojo::model::Model::<$type_name$>::get(*self, Self::serialize_keys(key).span())
+    }
+    fn get_entity<$type_name$Entity, $key_type$>(self: @IWorldDispatcher, key: $key_type$) -> $type_name$Entity{
+        $type_name$ModelEntityImpl::get(*self, Self::key_to_id(key))
+    }
+    fn get_entity_from_id<$type_name$Entity>(self: @IWorldDispatcher, id: felt252) -> $type_name$Entity{
+        $type_name$ModelEntityImpl::get(*self, id)
+    }
+    fn set<$type_name$>(self: IWorldDispatcher, model: $type_name$){
+        $type_name$ModelImpl::set(model, *self);
+    }
+    fn update<$type_name$Entity>(self: IWorldDispatcher, entity: $type_name$Entity){
+        $type_name$ModelEntityImpl::update(entity, *self);
+    }
+    fn delete<$type_name$>(self: IWorldDispatcher, model: $type_name$){
+        $type_name$ModelImpl::delete(model, *self);
+    }
+    fn delete_entity<$type_name$Entity>(self: IWorldDispatcher, entity: $type_name$Entity){
+        $type_name$ModelEntityImpl::delete(entity, *self);
+    }
+}
 
+#[generate_trait]
+pub impl $type_name$FieldStoreImpl of $type_name$FieldStore{
     $field_accessors$
 }
 
@@ -630,7 +644,7 @@ pub trait I$contract_name$<T> {
 }
 
 #[starknet::contract]
-pub mod $contract_name$ {
+pub mod $model_name_snake$ {
     use super::$type_name$;
     use super::I$contract_name$;
 
@@ -692,7 +706,8 @@ pub mod $contract_name$ {
 }
 ",
             &UnorderedHashMap::from([
-                ("contract_name".to_string(), RewriteNode::Text(model_name.to_case(Case::Snake))),
+                ("model_name_snake".to_string(), RewriteNode::Text(model_name.to_case(Case::Snake))),
+                ("MODEL_NAME_SNAKE".to_string(), RewriteNode::Text(model_name.to_case(Case::UpperSnake))),
                 ("type_name".to_string(), RewriteNode::Text(model_name)),
                 ("namespace".to_string(), RewriteNode::Text("namespace".to_string())),
                 ("serialized_keys".to_string(), RewriteNode::new_modified(serialized_keys)),
@@ -713,10 +728,6 @@ pub mod $contract_name$ {
                     RewriteNode::new_modified(serialized_param_keys),
                 ),
                 ("field_accessors".to_string(), RewriteNode::new_modified(field_accessors)),
-                (
-                    "entity_field_accessors".to_string(),
-                    RewriteNode::new_modified(entity_field_accessors),
-                ),
             ]),
         ),
         diagnostics,
@@ -777,80 +788,17 @@ fn serialize_member_ty(member: &Member, with_self: bool) -> RewriteNode {
 ///
 /// # Returns
 /// A [`RewriteNode`] containing accessors code.
-fn generate_field_accessors(
-    model_name: String,
-    param_keys: String,
-    serialized_param_keys: Vec<RewriteNode>,
-    member: &Member,
-) -> RewriteNode {
+fn generate_field_accessors(model_name: String, key_type: String, member: &Member) -> RewriteNode {
     RewriteNode::interpolate_patched(
         "
-    fn get_$field_name$(world: dojo::world::IWorldDispatcher, $param_keys$) -> $field_type$ {
-        let mut serialized = core::array::ArrayTrait::new();
-        $serialized_param_keys$
-
-        let mut values = dojo::model::Model::<$model_name$>::get_member(
-            world,
-            serialized.span(),
-            $field_selector$
-        );
-
-        let field_value = core::serde::Serde::<$field_type$>::deserialize(ref values);
-
-        if core::option::OptionTrait::<$field_type$>::is_none(@field_value) {
-            panic!(
-                \"Field `$model_name$::$field_name$`: deserialization failed.\"
-            );
-        }
-
-        core::option::OptionTrait::<$field_type$>::unwrap(field_value)
+    fn get_$model_name_snake$_$field_name$(self: @dojo::world::IWorldDispatcher, key: $key_type$) -> $field_type$ {
+        self.get_$model_name_snake$_$field_name$_from_id($model_name$Store::keys_to_id(key))
     }
 
-    fn set_$field_name$(self: @$model_name$, world: dojo::world::IWorldDispatcher, value: \
-         $field_type$) {
-        let mut serialized = core::array::ArrayTrait::new();
-        core::serde::Serde::serialize(@value, ref serialized);
-
-        self.set_member(
-            world,
-            $field_selector$,
-            serialized.span()
-        );
-    }
-            ",
-        &UnorderedHashMap::from([
-            ("model_name".to_string(), RewriteNode::Text(model_name)),
-            (
-                "field_selector".to_string(),
-                RewriteNode::Text(
-                    get_selector_from_name(&member.name).expect("invalid member name").to_string(),
-                ),
-            ),
-            ("field_name".to_string(), RewriteNode::Text(member.name.clone())),
-            ("field_type".to_string(), RewriteNode::Text(member.ty.clone())),
-            ("param_keys".to_string(), RewriteNode::Text(param_keys)),
-            ("serialized_param_keys".to_string(), RewriteNode::new_modified(serialized_param_keys)),
-        ]),
-    )
-}
-
-/// Generates field accessors (`get_[field_name]` and `set_[field_name]`) for every
-/// fields of a model entity.
-///
-/// # Arguments
-///
-/// * `model_name` - the model name.
-/// * `member` - information about the field for which to generate accessors.
-///
-/// # Returns
-/// A [`RewriteNode`] containing accessors code.
-fn generate_entity_field_accessors(model_name: String, member: &Member) -> RewriteNode {
-    RewriteNode::interpolate_patched(
-        "
-    fn get_$field_name$(world: dojo::world::IWorldDispatcher, entity_id: felt252) -> $field_type$ \
-         {
+    fn get_$model_name_snake$_$field_name$_from_id(self: @dojo::world::IWorldDispatcher, entity_id: felt252) -> $field_type$ \
+            {
         let mut values = dojo::model::ModelEntity::<$model_name$Entity>::get_member(
-            world,
+            self,
             entity_id,
             $field_selector$
         );
@@ -865,20 +813,30 @@ fn generate_entity_field_accessors(model_name: String, member: &Member) -> Rewri
         core::option::OptionTrait::<$field_type$>::unwrap(field_value)
     }
 
-    fn set_$field_name$(self: @$model_name$Entity, world: dojo::world::IWorldDispatcher, value: \
-         $field_type$) {
+    fn update_$model_name_snake$_$field_name$(self: dojo::world::IWorldDispatcher, key: $key_type$, value: $field_type$) {
+        self.update_$model_name_snake$_$field_name$_from_id($model_name$Store::keys_to_id(key), value)
+    }
+
+    fn update_$model_name_snake$_$field_name$_from_id(self: dojo::world::IWorldDispatcher, entity_id: felt252, value: $field_type$) {
         let mut serialized = core::array::ArrayTrait::new();
         core::serde::Serde::serialize(@value, ref serialized);
-
-        self.set_member(
-            world,
-            $field_selector$,
-            serialized.span()
-        );
+        match dojo::utils::find_model_field_layout($model_name$ModelImpl::layout(), $field_selector$) {
+            Option::Some(field_layout) => {
+                self.set_entity(
+                    $MODEL_NAME_SNAKE$_SELECTOR,
+                    dojo::model::ModelIndex::MemberId((entity_id, $field_selector$)),
+                    serialize.span(),
+                    field_layout
+                )
+            },
+            Option::None => core::panic_with_felt252('bad member id')
+        }
     }
-",
+            ",
         &UnorderedHashMap::from([
-            ("model_name".to_string(), RewriteNode::Text(model_name)),
+            ("model_name".to_string(), RewriteNode::Text(model_name.clone())),
+            ("model_name_snake".to_string(), RewriteNode::Text(model_name.to_case(Case::Snake))),
+            ("MODEL_NAME_SNAKE".to_string(), RewriteNode::Text(model_name.to_case(Case::UpperSnake))),
             (
                 "field_selector".to_string(),
                 RewriteNode::Text(
@@ -887,6 +845,7 @@ fn generate_entity_field_accessors(model_name: String, member: &Member) -> Rewri
             ),
             ("field_name".to_string(), RewriteNode::Text(member.name.clone())),
             ("field_type".to_string(), RewriteNode::Text(member.ty.clone())),
+            ("key_type".to_string(), RewriteNode::Text(key_type)),
         ]),
     )
 }

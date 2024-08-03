@@ -102,3 +102,16 @@ pub fn deploy_and_get_metadata(
     let namespace_hash = model.namespace_hash();
     Result::Ok((contract_address, name, selector, namespace, namespace_hash))
 }
+
+pub trait WorldStore {
+    fn serialize_key(key: K) -> Array<felt252>;
+    fn keys_to_id(key: K) -> felt252;
+    fn from_values(ref keys: Span<felt252>, ref values: Span<felt252>) -> M;
+    fn get<M, K>(self: @IWorldDispatcher, key: K) -> M;
+    fn get_entity<E, K>(self: @IWorldDispatcher, key: K) -> E;
+    fn get_entity_from_id<E>(self: @IWorldDispatcher, id: felt252) -> E;
+    fn set<M>(self: IWorldDispatcher, model: M);
+    fn update<E>(self: IWorldDispatcher, entity: E);
+    fn delete<M>(self: IWorldDispatcher, model: M);
+    fn delete_entity<E>(self: IWorldDispatcher, entity: E);
+}
