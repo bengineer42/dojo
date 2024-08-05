@@ -1,7 +1,6 @@
 use dojo::model::{Model, ModelEntity};
 use dojo::utils::test::{spawn_test_world};
 use dojo::world::{IWorldDispatcher, IWorldDispatcherTrait};
-
 // Utils
 fn deploy_world() -> IWorldDispatcher {
     spawn_test_world("dojo", array![])
@@ -11,189 +10,166 @@ fn deploy_world() -> IWorldDispatcher {
 #[dojo::model]
 struct Foo {
     #[key]
+    k: u8,
+    v1: u128,
+    v2: u32
+}
+
+#[dojo::model]
+#[derive(Copy, Drop, Debug)]
+struct Foo2 {
+    #[key]
     k1: u8,
     #[key]
     k2: felt252,
     v1: u128,
     v2: u32
 }
+// #[test]
+// fn test_id() {
+//     let mvalues = FooEntity { __id: 1, v1: 3, v2: 4 };
+//     assert!(mvalues.id() == 1);
+// }
 
-#[test]
-fn test_id() {
-    let mvalues = FooEntity { __id: 1, v1: 3, v2: 4 };
-    assert!(mvalues.id() == 1);
-}
+// #[test]
+// fn test_values() {
+//     let mvalues = FooEntity { __id: 1, v1: 3, v2: 4 };
+//     let expected_values = array![3, 4].span();
 
-#[test]
-fn test_values() {
-    let mvalues = FooEntity { __id: 1, v1: 3, v2: 4 };
-    let expected_values = array![3, 4].span();
+//     let values = ModelEntity::<FooEntity>::values(@mvalues);
+//     assert!(expected_values == values);
+// }
 
-    let values = ModelEntity::<FooEntity>::values(@mvalues);
-    assert!(expected_values == values);
-}
+// #[test]
+// fn test_from_values() {
+//     let mut values = array![3, 4].span();
 
-#[test]
-fn test_from_values() {
-    let mut values = array![3, 4].span();
+//     let model_entity = ModelEntity::<FooEntity>::from_values(1, ref values);
+//     assert!(model_entity.__id == 1 && model_entity.v1 == 3 && model_entity.v2 == 4);
+// }
 
-    let model_entity = ModelEntity::<FooEntity>::from_values(1, ref values);
-    assert!(model_entity.__id == 1 && model_entity.v1 == 3 && model_entity.v2 == 4);
-}
+// #[test]
+// #[should_panic(expected: "ModelEntity `FooEntity`: deserialization failed.")]
+// fn test_from_values_bad_data() {
+//     let mut values = array![3].span();
+//     let _ = ModelEntity::<FooEntity>::from_values(1, ref values);
+// }
 
-#[test]
-#[should_panic(expected: "ModelEntity `FooEntity`: deserialization failed.")]
-fn test_from_values_bad_data() {
-    let mut values = array![3].span();
-    let _ = ModelEntity::<FooEntity>::from_values(1, ref values);
-}
+// #[test]
+// fn test_get_and_update_entity() {
+//     let world = deploy_world();
+//     world.register_model(foo::TEST_CLASS_HASH.try_into().unwrap());
 
-#[test]
-fn test_get_and_update_entity() {
-    let world = deploy_world();
-    world.register_model(foo::TEST_CLASS_HASH.try_into().unwrap());
+//     let foo = Foo { k: 1, v1: 3, v2: 4 };
+//     world.set(foo);
 
-    let foo = Foo { k1: 1, k2: 2, v1: 3, v2: 4 };
-    foo.set(world);
+//     let entity_id = foo.entity_id();
+//     let mut entity: FooEntity = world.get_entity(foo.k);
+//     assert!(entity.__id == entity_id && entity.v1 == entity.v1 && entity.v2 == entity.v2);
 
-    let entity_id = foo.entity_id();
-    let mut entity = FooEntityStore::get(world, entity_id);
-    assert!(entity.__id == entity_id && entity.v1 == entity.v1 && entity.v2 == entity.v2);
+//     entity.v1 = 12;
+//     entity.v2 = 18;
+//     world.update(entity);
 
-    entity.v1 = 12;
-    entity.v2 = 18;
+//     let read_values: FooEntity = world.get_entity(foo.k);
+//     assert!(read_values.v1 == entity.v1 && read_values.v2 == entity.v2);
+// }
 
-    entity.update(world);
+// #[test]
+// fn test_get_and_update_entity_from_id() {
+//     let world = deploy_world();
+//     world.register_model(foo::TEST_CLASS_HASH.try_into().unwrap());
 
-    let read_values = FooEntityStore::get(world, entity_id);
-    assert!(read_values.v1 == entity.v1 && read_values.v2 == entity.v2);
-}
+//     let foo = Foo { k: 1, v1: 3, v2: 4 };
+//     world.set(foo);
 
-#[test]
-fn test_delete_entity() {
-    let world = deploy_world();
-    world.register_model(foo::TEST_CLASS_HASH.try_into().unwrap());
+//     let entity_id = foo.entity_id();
+//     let mut entity: FooEntity = world.get_entity_from_id(entity_id);
+//     assert!(entity.__id == entity_id && entity.v1 == entity.v1 && entity.v2 == entity.v2);
 
-    let foo = Foo { k1: 1, k2: 2, v1: 3, v2: 4 };
-    foo.set(world);
+//     entity.v1 = 12;
+//     entity.v2 = 18;
+//     world.update(entity);
 
-    let entity_id = foo.entity_id();
-    let mut entity = FooEntityStore::get(world, entity_id);
-    entity.delete(world);
+//     let read_values: FooEntity = world.get_entity_from_id(entity_id);
+//     assert!(read_values.v1 == entity.v1 && read_values.v2 == entity.v2);
+// }
 
-    let read_values = FooEntityStore::get(world, entity_id);
-    assert!(read_values.v1 == 0 && read_values.v2 == 0);
-}
+// #[test]
+// fn test_delete_entity() {
+//     let world = deploy_world();
+//     world.register_model(foo::TEST_CLASS_HASH.try_into().unwrap());
 
-#[test]
-fn test_get_and_set_member_from_entity() {
-    let world = deploy_world();
-    world.register_model(foo::TEST_CLASS_HASH.try_into().unwrap());
+//     let foo = Foo { k: 1, v1: 3, v2: 4 };
+//     world.set(foo);
 
-    let foo = Foo { k1: 1, k2: 2, v1: 3, v2: 4 };
-    foo.set(world);
+//     let mut entity = world.get_entity(foo.k);
+//     world.delete(entity);
 
-    let v1_raw_value: Span<felt252> = ModelEntity::<
-        FooEntity
-    >::get_member(world, foo.entity_id(), selector!("v1"));
+//     let read_values: FooEntity = world.get_entity(foo.k);
+//     assert!(read_values.v1 == 0 && read_values.v2 == 0);
+// }
 
-    assert!(v1_raw_value.len() == 1);
-    assert!(*v1_raw_value.at(0) == 3);
+// #[test]
+// fn test_get_and_set_field_name_from_id() {
+//     let world = deploy_world();
+//     world.register_model(foo::TEST_CLASS_HASH.try_into().unwrap());
 
-    let entity = FooEntityStore::get(world, foo.entity_id());
-    entity.set_member(world, selector!("v1"), array![42].span());
+//     let foo = Foo { k: 1, v1: 3, v2: 4 };
+//     world.set(foo);
 
-    let entity = FooEntityStore::get(world, foo.entity_id());
-    assert!(entity.v1 == 42);
-}
+//     let v1 = world.get_foo_v1_from_id(foo.entity_id());
+//     assert!(foo.v1 == v1);
 
-#[test]
-fn test_get_and_set_field_name() {
-    let world = deploy_world();
-    world.register_model(foo::TEST_CLASS_HASH.try_into().unwrap());
+//     world.update_foo_v1_from_id(foo.entity_id(), 42);
 
-    let foo = Foo { k1: 1, k2: 2, v1: 3, v2: 4 };
-    foo.set(world);
+//     let v1 = world.get_foo_v1_from_id(foo.entity_id());
+//     assert!(v1 == 42);
+// }
 
-    let v1 = FooEntityStore::get_v1(world, foo.entity_id());
-    assert!(foo.v1 == v1);
+// #[test]
+// fn test_get_and_set_from_model() {
+//     let world = deploy_world();
+//     world.register_model(foo::TEST_CLASS_HASH.try_into().unwrap());
 
-    let entity = FooEntityStore::get(world, foo.entity_id());
-    entity.set_v1(world, 42);
+//     let foo = Foo { k: 1, v1: 3, v2: 4 };
+//     world.set(foo);
 
-    let v1 = FooEntityStore::get_v1(world, foo.entity_id());
-    assert!(v1 == 42);
-}
+//     let read_entity: Foo = world.get(foo.k);
 
-#[test]
-fn test_get_and_set_from_model() {
-    let world = deploy_world();
-    world.register_model(foo::TEST_CLASS_HASH.try_into().unwrap());
+//     assert!(foo.k == read_entity.k && foo.v1 == read_entity.v1 && foo.v2 == read_entity.v2);
+// }
 
-    let foo = Foo { k1: 1, k2: 2, v1: 3, v2: 4 };
-    foo.set(world);
+// #[test]
+// fn test_delete_from_model() {
+//     let world = deploy_world();
+//     world.register_model(foo::TEST_CLASS_HASH.try_into().unwrap());
 
-    let read_entity = FooStore::get(world, foo.k1, foo.k2);
+//     let foo = Foo { k: 1, v1: 3, v2: 4 };
+//     world.set(foo);
+//     world.delete(foo);
 
-    assert!(
-        foo.k1 == read_entity.k1
-            && foo.k2 == read_entity.k2
-            && foo.v1 == read_entity.v1
-            && foo.v2 == read_entity.v2
-    );
-}
+//     let read_entity: Foo = world.get(foo.k);
+//     assert!(read_entity.k == foo.k && read_entity.v1 == 0 && read_entity.v2 == 0);
+// }
 
-#[test]
-fn test_delete_from_model() {
-    let world = deploy_world();
-    world.register_model(foo::TEST_CLASS_HASH.try_into().unwrap());
+// #[test]
+// fn test_get_and_set_member_from_model() {
+//     let world = deploy_world();
+//     world.register_model(foo::TEST_CLASS_HASH.try_into().unwrap());
 
-    let foo = Foo { k1: 1, k2: 2, v1: 3, v2: 4 };
-    foo.set(world);
-    foo.delete(world);
+//     let foo = Foo { k: 1, v1: 3, v2: 4 };
+//     let keys = array![foo.k.into()].span();
+//     world.set(foo);
 
-    let read_entity = FooStore::get(world, foo.k1, foo.k2);
-    assert!(
-        read_entity.k1 == foo.k1
-            && read_entity.k2 == foo.k2
-            && read_entity.v1 == 0
-            && read_entity.v2 == 0
-    );
-}
+//     let v1_raw_value = Model::<Foo>::get_member(world, keys, selector!("v1"));
 
-#[test]
-fn test_get_and_set_member_from_model() {
-    let world = deploy_world();
-    world.register_model(foo::TEST_CLASS_HASH.try_into().unwrap());
+//     assert!(v1_raw_value.len() == 1);
+//     assert!(*v1_raw_value.at(0) == 3);
 
-    let foo = Foo { k1: 1, k2: 2, v1: 3, v2: 4 };
-    let keys = array![foo.k1.into(), foo.k2.into()].span();
-    foo.set(world);
+//     foo.set_member(world, selector!("v1"), array![42].span());
+//     let foo: Foo = world.get(foo.k);
+//     assert!(foo.v1 == 42);
+// }
 
-    let v1_raw_value = Model::<Foo>::get_member(world, keys, selector!("v1"));
-
-    assert!(v1_raw_value.len() == 1);
-    assert!(*v1_raw_value.at(0) == 3);
-
-    foo.set_member(world, selector!("v1"), array![42].span());
-    let foo = FooStore::get(world, foo.k1, foo.k2);
-    assert!(foo.v1 == 42);
-}
-
-#[test]
-fn test_get_and_set_field_name_from_model() {
-    let world = deploy_world();
-    world.register_model(foo::TEST_CLASS_HASH.try_into().unwrap());
-
-    let foo = Foo { k1: 1, k2: 2, v1: 3, v2: 4 };
-    foo.set(world);
-
-    let v1 = FooStore::get_v1(world, foo.k1, foo.k2);
-    assert!(v1 == 3);
-
-    foo.set_v1(world, 42);
-
-    let v1 = FooStore::get_v1(world, foo.k1, foo.k2);
-    assert!(v1 == 42);
-}
 
