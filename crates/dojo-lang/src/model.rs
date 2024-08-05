@@ -136,7 +136,6 @@ fn get_model_parameters(
             ArgClause::Named(x) => {
                 let arg_name = x.name(db).text(db).to_string();
                 let arg_value = x.value(db);
-
                 if processed_args.contains_key(&arg_name) {
                     diagnostics.push(PluginDiagnostic {
                         message: format!("Too many '{}' attributes for dojo::model", arg_name),

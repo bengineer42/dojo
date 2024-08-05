@@ -68,6 +68,7 @@ mod tests {
     mod model {
         mod introspect;
         mod model;
+        mod tests;
     }
     mod storage {
         mod database;

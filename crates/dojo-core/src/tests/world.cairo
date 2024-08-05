@@ -1177,7 +1177,7 @@ fn test_delete_entity_by_id() {
 
     world.set_entity(selector, ModelIndex::Id(entity_id), values, layout);
 
-    world.delete_entity(selector, ModelIndex::Id(entity_id), layout);
+    IWorldDispatcherTrait::delete_entity(world, selector, ModelIndex::Id(entity_id), layout);
 
     let read_values = world.entity(selector, ModelIndex::Id(entity_id), layout);
 
@@ -1196,7 +1196,7 @@ fn test_delete_entity_with_fixed_layout() {
 
     world.set_entity(selector, ModelIndex::Keys(get_key_test()), values, layout);
 
-    world.delete_entity(selector, ModelIndex::Keys(keys), layout);
+    IWorldDispatcherTrait::delete_entity(world, selector, ModelIndex::Keys(keys), layout);
 
     let read_values = world.entity(selector, ModelIndex::Keys(keys), layout);
 
@@ -1216,7 +1216,7 @@ fn test_delete_entity_with_simple_struct_layout() {
 
     world.set_entity(selector, ModelIndex::Keys(keys), values, layout);
 
-    world.delete_entity(selector, ModelIndex::Keys(keys), layout);
+    IWorldDispatcherTrait::delete_entity(world, selector, ModelIndex::Keys(keys), layout);
 
     let read_values = world.entity(selector, ModelIndex::Keys(keys), layout);
 
@@ -1236,7 +1236,7 @@ fn test_delete_entity_with_struct_simple_array_layout() {
 
     world.set_entity(selector, ModelIndex::Keys(keys), values, layout);
 
-    world.delete_entity(selector, ModelIndex::Keys(keys), layout);
+    IWorldDispatcherTrait::delete_entity(world, selector, ModelIndex::Keys(keys), layout);
 
     let read_values = world.entity(selector, ModelIndex::Keys(keys), layout);
 
@@ -1260,7 +1260,7 @@ fn test_delete_entity_with_complex_array_struct_layout() {
 
     world.set_entity(selector, ModelIndex::Keys(keys), values, layout);
 
-    world.delete_entity(selector, ModelIndex::Keys(keys), layout);
+    IWorldDispatcherTrait::delete_entity(world, selector, ModelIndex::Keys(keys), layout);
 
     let read_values = world.entity(selector, ModelIndex::Keys(keys), layout);
 
@@ -1283,7 +1283,7 @@ fn test_delete_entity_with_struct_tuple_layout() {
 
     world.set_entity(selector, ModelIndex::Keys(keys), values, layout);
 
-    world.delete_entity(selector, ModelIndex::Keys(keys), layout);
+    IWorldDispatcherTrait::delete_entity(world, selector, ModelIndex::Keys(keys), layout);
 
     let expected_values = array![0, 0].span();
     let read_values = world.entity(selector, ModelIndex::Keys(keys), layout);
@@ -1305,7 +1305,7 @@ fn test_delete_entity_with_struct_enum_layout() {
     // test with the first variant
     world.set_entity(selector, ModelIndex::Keys(keys), values, layout);
 
-    world.delete_entity(selector, ModelIndex::Keys(keys), layout);
+    IWorldDispatcherTrait::delete_entity(world, selector, ModelIndex::Keys(keys), layout);
 
     let expected_values = array![0, 0, 0].span();
     let read_values = world.entity(selector, ModelIndex::Keys(keys), layout);
@@ -1326,7 +1326,7 @@ fn test_delete_entity_with_struct_layout_and_byte_array() {
 
     world.set_entity(selector, ModelIndex::Keys(keys), values, layout);
 
-    world.delete_entity(selector, ModelIndex::Keys(keys), layout);
+    IWorldDispatcherTrait::delete_entity(world, selector, ModelIndex::Keys(keys), layout);
 
     let expected_values = array![0, 0, 0, 0].span();
     let read_values = world.entity(selector, ModelIndex::Keys(keys), layout);
@@ -1347,7 +1347,7 @@ fn test_delete_entity_with_nested_elements() {
 
     world.set_entity(selector, ModelIndex::Keys(keys), values, layout);
 
-    world.delete_entity(selector, ModelIndex::Keys(keys), layout);
+    IWorldDispatcherTrait::delete_entity(world, selector, ModelIndex::Keys(keys), layout);
 
     let expected_values = array![0, 0, 0, 0, 0, 0, 0, 0, 0].span();
     let read_values = world.entity(selector, ModelIndex::Keys(keys), layout);
@@ -1368,7 +1368,7 @@ fn test_delete_entity_with_struct_generics_enum_layout() {
 
     world.set_entity(selector, ModelIndex::Keys(keys), values, layout);
 
-    world.delete_entity(selector, ModelIndex::Keys(keys), layout);
+    IWorldDispatcherTrait::delete_entity(world, selector, ModelIndex::Keys(keys), layout);
 
     let expected_values = array![0, 0].span();
     let read_values = world.entity(selector, ModelIndex::Keys(keys), layout);
@@ -1419,10 +1419,12 @@ fn test_delete_entity_with_unexpected_array_model_layout() {
 
     let layout = Layout::Array(array![Introspect::<felt252>::layout()].span());
 
-    world
-        .delete_entity(
-            Model::<StructSimpleArrayModel>::selector(), ModelIndex::Keys(array![].span()), layout
-        );
+    IWorldDispatcherTrait::delete_entity(
+        world,
+        Model::<StructSimpleArrayModel>::selector(),
+        ModelIndex::Keys(array![].span()),
+        layout
+    );
 }
 
 #[test]
@@ -1433,10 +1435,12 @@ fn test_delete_entity_with_unexpected_tuple_model_layout() {
 
     let layout = Layout::Tuple(array![Introspect::<felt252>::layout()].span());
 
-    world
-        .delete_entity(
-            Model::<StructSimpleArrayModel>::selector(), ModelIndex::Keys(array![].span()), layout
-        );
+    IWorldDispatcherTrait::delete_entity(
+        world,
+        Model::<StructSimpleArrayModel>::selector(),
+        ModelIndex::Keys(array![].span()),
+        layout
+    );
 }
 
 #[test]

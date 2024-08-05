@@ -2,11 +2,11 @@ const $MODEL_NAME_SNAKE$_SELECTOR: felt252 = $model_selector$;
 
 #[derive(Drop, Serde)]
 pub struct $model_name$Entity {
-    __id: felt252, // private field
+    pub __id: felt252, // private field
     $members_values$
 }
 
-pub impl $model_name$Store of dojo::model::WorldStore<$key_type$>{
+pub impl $model_name$Store of dojo::model::WorldStore<$model_name$, $model_name$Entity, $key_type$>{
     fn serialize_key(key: $key_type$) -> Array<felt252> {
         $expand_keys$
         let mut serialized = core::array::ArrayTrait::new();
@@ -16,7 +16,7 @@ pub impl $model_name$Store of dojo::model::WorldStore<$key_type$>{
     fn key_to_id(key: $key_type$) -> felt252 {
         core::poseidon::poseidon_hash_span(Self::serialize_key(key).span())
     }
-    fn from_values<$model_name$>(ref keys: Span<felt252>, ref values: Span<felt252>) -> $model_name${
+    fn from_values(ref keys: Span<felt252>, ref values: Span<felt252>) -> $model_name${
         let mut serialized = core::array::ArrayTrait::new();
         serialized.append_span(keys);
         serialized.append_span(values);
@@ -30,25 +30,25 @@ pub impl $model_name$Store of dojo::model::WorldStore<$key_type$>{
         }
         core::option::OptionTrait::<$model_name$>::unwrap(entity)
     }
-    fn get<$model_name$>(self: @IWorldDispatcher, key: $key_type$) -> $model_name$ {
+    fn get(self: @dojo::world::IWorldDispatcher, key: $key_type$) -> $model_name$ {
         dojo::model::Model::<$model_name$>::get(*self, Self::serialize_key(key).span())
     }
-    fn get_entity<$model_name$Entity>(self: @IWorldDispatcher, key: $key_type$) -> $model_name$Entity{
+    fn get_entity(self: @dojo::world::IWorldDispatcher, key: $key_type$) -> $model_name$Entity{
         $model_name$ModelEntityImpl::get(*self, Self::key_to_id(key))
     }
-    fn get_entity_from_id<$model_name$Entity>(self: @IWorldDispatcher, id: felt252) -> $model_name$Entity{
+    fn get_entity_from_id(self: @dojo::world::IWorldDispatcher, id: felt252) -> $model_name$Entity{
         $model_name$ModelEntityImpl::get(*self, id)
     }
-    fn set<$model_name$>(self: IWorldDispatcher, model: $model_name$){
+    fn set(self: dojo::world::IWorldDispatcher, model: $model_name$){
         $model_name$ModelImpl::set(@model, self);
     }
-    fn update<$model_name$Entity>(self: IWorldDispatcher, entity: $model_name$Entity){
+    fn update(self: dojo::world::IWorldDispatcher, entity: $model_name$Entity){
         $model_name$ModelEntityImpl::update(@entity, self);
     }
-    fn delete<$model_name$>(self: IWorldDispatcher, model: $model_name$){
+    fn delete(self: dojo::world::IWorldDispatcher, model: $model_name$){
         $model_name$ModelImpl::delete(@model, self);
     }
-    fn delete_entity<$model_name$Entity>(self: IWorldDispatcher, entity: $model_name$Entity){
+    fn delete_entity(self: dojo::world::IWorldDispatcher, entity: $model_name$Entity){
         $model_name$ModelEntityImpl::delete(@entity, self);
     }
 }

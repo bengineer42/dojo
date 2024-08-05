@@ -29,7 +29,8 @@
         core::serde::Serde::serialize(@value, ref serialized);
         match dojo::utils::find_model_field_layout($model_name$ModelImpl::layout(), $field_selector$) {
             Option::Some(field_layout) => {
-                self.set_entity(
+                dojo::world::IWorldDispatcherTrait::set_entity(
+                    self,
                     $MODEL_NAME_SNAKE$_SELECTOR,
                     dojo::model::ModelIndex::MemberId((entity_id, $field_selector$)),
                     serialized.span(),
