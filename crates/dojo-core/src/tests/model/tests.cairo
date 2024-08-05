@@ -4,7 +4,7 @@ use dojo::utils::test::{spawn_test_world};
 
 use dojo::tests::model::model::{
     Foo, FooStore, FooEntity, foo::TEST_CLASS_HASH as FOO_TEST_CLASS_HASH, FooFieldStore, Foo2,
-    Foo2Store, Foo2Entity, foo_2::TEST_CLASS_HASH as FOO2_TEST_CLASS_HASH, Foo2FieldStore
+    Foo2Store, Foo2Entity, foo_2::TEST_CLASS_HASH as FOO_2_TEST_CLASS_HASH, Foo2FieldStore
 };
 
 // Utils
@@ -54,12 +54,13 @@ fn test_get_and_update_entity() {
     let mut entity: FooEntity = FooStore::get_entity(@world, foo.k);
     assert!(entity.__id == entity_id && entity.v1 == entity.v1 && entity.v2 == entity.v2);
 
-    entity.v1 = 12;
-    entity.v2 = 18;
+    let (v1, v2) = (12, 18);
+    entity.v1 = v1;
+    entity.v2 = v2;
     FooStore::update(world, entity);
 
     let read_values: FooEntity = FooStore::get_entity(@world, foo.k);
-    assert!(read_values.v1 == entity.v1 && read_values.v2 == entity.v2);
+    assert!(read_values.v1 == v1 && read_values.v2 == v2);
 }
 
 
@@ -74,12 +75,14 @@ fn test_get_and_update_entity_from_id() {
     let entity_id = foo.entity_id();
     let mut entity: FooEntity = FooStore::get_entity_from_id(@world, entity_id);
     assert!(entity.__id == entity_id && entity.v1 == entity.v1 && entity.v2 == entity.v2);
-    entity.v1 = 12;
-    entity.v2 = 18;
+
+    let (v1, v2) = (12, 18);
+    entity.v1 = v1;
+    entity.v2 = v2;
     FooStore::update(world, entity);
 
     let read_values: FooEntity = FooStore::get_entity_from_id(@world, entity_id);
-    assert!(read_values.v1 == entity.v1 && read_values.v2 == entity.v2);
+    assert!(read_values.v1 == v1 && read_values.v2 == v2);
 }
 
 #[test]
@@ -163,7 +166,7 @@ fn test_get_and_set_member_from_model() {
 #[test]
 fn test_get_and_update_entity_tuple() {
     let world = deploy_world();
-    world.register_model(FOO2_TEST_CLASS_HASH.try_into().unwrap());
+    world.register_model(FOO_2_TEST_CLASS_HASH.try_into().unwrap());
 
     let foo = Foo2 { k1: 1, k2: 2, v1: 3, v2: 4 };
     world.set(foo);
@@ -172,19 +175,20 @@ fn test_get_and_update_entity_tuple() {
     let mut entity: Foo2Entity = Foo2Store::get_entity(@world, (foo.k1, foo.k2));
     assert!(entity.__id == entity_id && entity.v1 == entity.v1 && entity.v2 == entity.v2);
 
-    entity.v1 = 12;
-    entity.v2 = 18;
+    let (v1, v2) = (12, 18);
+    entity.v1 = v1;
+    entity.v2 = v2;
     Foo2Store::update(world, entity);
 
     let read_values: Foo2Entity = Foo2Store::get_entity(@world, (foo.k1, foo.k2));
-    assert!(read_values.v1 == entity.v1 && read_values.v2 == entity.v2);
+    assert!(read_values.v1 == v1 && read_values.v2 == v2);
 }
 
 
 #[test]
 fn test_delete_entity_tuple() {
     let world = deploy_world();
-    world.register_model(FOO2_TEST_CLASS_HASH.try_into().unwrap());
+    world.register_model(FOO_2_TEST_CLASS_HASH.try_into().unwrap());
 
     let foo = Foo2 { k1: 1, k2: 2, v1: 3, v2: 4 };
     world.set(foo);
@@ -200,7 +204,7 @@ fn test_delete_entity_tuple() {
 #[test]
 fn test_get_and_set_from_model_tuple() {
     let world = deploy_world();
-    world.register_model(FOO2_TEST_CLASS_HASH.try_into().unwrap());
+    world.register_model(FOO_2_TEST_CLASS_HASH.try_into().unwrap());
 
     let foo = Foo2 { k1: 1, k2: 2, v1: 3, v2: 4 };
     world.set(foo);
@@ -218,7 +222,7 @@ fn test_get_and_set_from_model_tuple() {
 #[test]
 fn test_delete_from_model_tuple() {
     let world = deploy_world();
-    world.register_model(FOO2_TEST_CLASS_HASH.try_into().unwrap());
+    world.register_model(FOO_2_TEST_CLASS_HASH.try_into().unwrap());
 
     let foo = Foo2 { k1: 1, k2: 2, v1: 3, v2: 4 };
     world.set(foo);
@@ -236,7 +240,7 @@ fn test_delete_from_model_tuple() {
 #[test]
 fn test_get_and_set_member_from_model_tuple() {
     let world = deploy_world();
-    world.register_model(FOO2_TEST_CLASS_HASH.try_into().unwrap());
+    world.register_model(FOO_2_TEST_CLASS_HASH.try_into().unwrap());
 
     let foo = Foo2 { k1: 1, k2: 2, v1: 3, v2: 4 };
     let keys = array![foo.k1.into(), foo.k2.into()].span();
