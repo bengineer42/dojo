@@ -4,7 +4,7 @@
 
     fn get_$model_name_snake$_$field_name$_from_id(self: @dojo::world::IWorldDispatcher, entity_id: felt252) -> $field_type$ 
             {
-        let mut values = dojo::model::ModelEntity::<$model_name$Entity>::get_member(
+        let mut values = dojo::model::model::ModelEntity::<$model_name$Entity>::get_member(
             *self,
             entity_id,
             $field_selector$

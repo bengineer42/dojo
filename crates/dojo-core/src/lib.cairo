@@ -14,7 +14,7 @@ pub mod model {
     pub mod model;
     pub use model::{
         Model, ModelIndex, ModelEntity, IModel, IModelDispatcher, IModelDispatcherTrait,
-        deploy_and_get_metadata, WorldStore
+        deploy_and_get_metadata, WorldStoreTrait
     };
 
     pub mod metadata;

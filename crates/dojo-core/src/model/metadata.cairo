@@ -43,7 +43,7 @@ pub impl ResourceMetadataImpl of ResourceMetadataTrait {
 }
 
 pub impl ResourceMetadataModel of Model<ResourceMetadata> {
-    fn get(world: IWorldDispatcher, keys: Span<felt252>) -> ResourceMetadata {
+    fn get_model(world: IWorldDispatcher, keys: Span<felt252>) -> ResourceMetadata {
         if keys.len() != 1 {
             panic!("Model `ResourceMetadata`: bad keys length.");
         };
@@ -52,13 +52,27 @@ pub impl ResourceMetadataModel of Model<ResourceMetadata> {
         ResourceMetadataTrait::from_values(*keys.at(0), ref values)
     }
 
-    fn set(self: @ResourceMetadata, world: IWorldDispatcher,) {
+    fn set_model(self: @ResourceMetadata, world: IWorldDispatcher,) {
         IWorldDispatcherTrait::set_entity(
             world, Self::selector(), ModelIndex::Keys(self.keys()), self.values(), Self::layout()
         );
     }
+    fn from_values(ref keys: Span<felt252>, ref values: Span<felt252>) -> ResourceMetadata {
+        let mut serialized = core::array::ArrayTrait::new();
+        serialized.append_span(keys);
+        serialized.append_span(values);
+        let mut serialized = core::array::ArrayTrait::span(@serialized);
 
-    fn delete(self: @ResourceMetadata, world: IWorldDispatcher,) {
+        let entity = core::serde::Serde::<ResourceMetadata>::deserialize(ref serialized);
+        if core::option::OptionTrait::<ResourceMetadata>::is_none(@entity) {
+            panic!(
+                "Model: deserialization failed. Ensure the length of the keys tuple is matching the number of #[key] fields in the model struct."
+            );
+        }
+        core::option::OptionTrait::<ResourceMetadata>::unwrap(entity)
+    }
+
+    fn delete_model(self: @ResourceMetadata, world: IWorldDispatcher,) {
         world.delete_entity(Self::selector(), ModelIndex::Keys(self.keys()), Self::layout());
     }
 
