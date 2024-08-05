@@ -32,7 +32,7 @@ fn test_from_values() {
     let mut values = array![3, 4].span();
 
     let model_entity = ModelEntity::<FooEntity>::from_values(1, ref values);
-    assert!(model_entity.__id == 1 && model_entity.v1 == 3 && model_entity.v2 == 4);
+    assert!(model_entity.id() == 1 && model_entity.v1 == 3 && model_entity.v2 == 4);
 }
 
 #[test]
@@ -52,14 +52,14 @@ fn test_get_and_update_entity() {
 
     let entity_id = foo.entity_id();
     let mut entity: FooEntity = FooStore::get_entity(@world, foo.k);
-    assert!(entity.__id == entity_id && entity.v1 == entity.v1 && entity.v2 == entity.v2);
+    assert!(entity.id() == entity_id && entity.v1 == entity.v1 && entity.v2 == entity.v2);
 
     let (v1, v2) = (12, 18);
     entity.v1 = v1;
     entity.v2 = v2;
     FooStore::update(world, entity);
 
-    let read_values: FooEntity = FooStore::get_entity(@world, foo.k);
+    let read_values: FooEntity = world.get_entity(foo.k);
     assert!(read_values.v1 == v1 && read_values.v2 == v2);
 }
 
@@ -74,7 +74,7 @@ fn test_get_and_update_entity_from_id() {
 
     let entity_id = foo.entity_id();
     let mut entity: FooEntity = FooStore::get_entity_from_id(@world, entity_id);
-    assert!(entity.__id == entity_id && entity.v1 == entity.v1 && entity.v2 == entity.v2);
+    assert!(entity.id() == entity_id && entity.v1 == entity.v1 && entity.v2 == entity.v2);
 
     let (v1, v2) = (12, 18);
     entity.v1 = v1;
@@ -173,7 +173,7 @@ fn test_get_and_update_entity_tuple() {
 
     let entity_id = foo.entity_id();
     let mut entity: Foo2Entity = Foo2Store::get_entity(@world, (foo.k1, foo.k2));
-    assert!(entity.__id == entity_id && entity.v1 == entity.v1 && entity.v2 == entity.v2);
+    assert!(entity.id() == entity_id && entity.v1 == entity.v1 && entity.v2 == entity.v2);
 
     let (v1, v2) = (12, 18);
     entity.v1 = v1;

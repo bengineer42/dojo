@@ -267,6 +267,7 @@ pub fn handle_model_struct(
     let mut members_values: Vec<RewriteNode> = vec![];
     let mut serialized_keys: Vec<RewriteNode> = vec![];
     let mut key_names_vec: Vec<String> = vec![];
+    let mut value_names_vec: Vec<String> = vec![];
     let mut key_type_vec: Vec<String> = vec![];
     let mut serialized_param_keys: Vec<RewriteNode> = vec![];
     let mut serialized_values: Vec<RewriteNode> = vec![];
@@ -291,12 +292,14 @@ pub fn handle_model_struct(
             serialized_values.push(serialize_member_ty(&member, true));
             members_values
                 .push(RewriteNode::Text(format!("pub {}: {},\n", member.name, member.ty)));
+            value_names_vec.push(member.name.clone());
         }
 
         members.push(member);
     });
 
     let key_names_csv = key_names_vec.join(", ");
+    let value_names_csv = value_names_vec.join(", ");
     let key_type_csv = key_type_vec.join(", ");
 
     let (key_object, key_type) = if key_names_vec.len() > 1 {
@@ -351,11 +354,14 @@ pub fn handle_model_struct(
         ("model_namespace".to_string(), RewriteNode::Text(model_namespace.clone())),
         ("model_name_hash".to_string(), RewriteNode::Text(model_name_hash.to_string())),
         ("model_namespace_hash".to_string(), RewriteNode::Text(model_namespace_hash.to_string())),
+        ("key_names".to_string(), RewriteNode::Text(key_names_csv)),
+        ("value_names".to_string(), RewriteNode::Text(value_names_csv)),
         ("model_tag".to_string(), RewriteNode::Text(model_tag.clone())),
         ("members_values".to_string(), RewriteNode::new_modified(members_values)),
         ("serialized_param_keys".to_string(), RewriteNode::new_modified(serialized_param_keys)),
         ("field_accessors".to_string(), RewriteNode::new_modified(field_accessors)),
     ]);
+    println!("{:?}", RewriteNode::interpolate_patched(MODEL_STORE_STRING, &patches));
     (RewriteNode::interpolate_patched(MODEL_STORE_STRING, &patches), diagnostics)
 }
 
