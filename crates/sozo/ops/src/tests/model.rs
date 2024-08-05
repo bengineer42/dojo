@@ -6,7 +6,7 @@ use scarb_ui::{OutputFormat, Ui, Verbosity};
 use starknet::accounts::Account;
 use starknet::core::types::Felt;
 
-use super::setup;
+use crate::test_utils::setup;
 use crate::{execute, model};
 
 // Test model ops in the same to avoid spinning up several katana with full
@@ -37,7 +37,7 @@ async fn test_model_ops() {
         )
         .await
         .unwrap(),
-        Felt::from_hex("0x6dd9f573496d64b1c026c68cbfe31a7724c7bcd4a142099666e8e22b82e0688")
+        Felt::from_hex("0x4eddd8563a17c7d256b35e3cb0decdfcdfe122dd72593ebc572cfc535941ac2")
             .unwrap()
     );
 
