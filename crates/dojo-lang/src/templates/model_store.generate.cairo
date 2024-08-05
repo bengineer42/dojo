@@ -51,15 +51,6 @@ pub impl $model_name$Store of dojo::model::WorldStore<$model_name$, $model_name$
     fn delete_entity(self: dojo::world::IWorldDispatcher, entity: $model_name$Entity){
         $model_name$ModelEntityImpl::delete(@entity, self);
     }
-    fn to_entity(self: @$model_name$) -> $model_name$Entity{
-        let $model_name${$key_names$, $value_names$} = *self;
-        $model_name$Entity{__id: self.entity_id(), $value_names$}
-    }
-    fn to_model(self: @$model_name$Entity, key: $key_type$) -> $model_name${
-        $expand_keys$
-        let $model_name$Entity{__id, $value_names$} = *self;
-        $model_name${$key_names$, $value_names$}
-    }
 }
 
 #[generate_trait]

@@ -114,6 +114,4 @@ pub trait WorldStore<M, E, K> {
     fn update(self: IWorldDispatcher, entity: E);
     fn delete(self: IWorldDispatcher, model: M);
     fn delete_entity(self: IWorldDispatcher, entity: E);
-    fn to_entity(self: @M) -> E;
-    fn to_model(self: @E, key: K) -> M;
 }

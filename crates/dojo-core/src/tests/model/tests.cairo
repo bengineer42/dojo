@@ -13,26 +13,16 @@ fn deploy_world() -> IWorldDispatcher {
 }
 
 #[test]
-fn test_id() {
-    let mvalues = FooEntity { __id: 1, v1: 3, v2: 4 };
-    assert!(mvalues.id() == 1);
-}
-
-#[test]
-fn test_values() {
-    let mvalues = FooEntity { __id: 1, v1: 3, v2: 4 };
-    let expected_values = array![3, 4].span();
-
-    let values = ModelEntity::<FooEntity>::values(@mvalues);
-    assert!(expected_values == values);
-}
-
-#[test]
 fn test_from_values() {
     let mut values = array![3, 4].span();
+    let expected_values = array![12, 42].span();
 
-    let model_entity = ModelEntity::<FooEntity>::from_values(1, ref values);
+    let mut model_entity = ModelEntity::<FooEntity>::from_values(1, ref values);
     assert!(model_entity.id() == 1 && model_entity.v1 == 3 && model_entity.v2 == 4);
+    model_entity.v1 = 12;
+    model_entity.v2 = 42;
+    let values = ModelEntity::<FooEntity>::values(@model_entity);
+    assert!(expected_values == values);
 }
 
 #[test]
@@ -59,7 +49,7 @@ fn test_get_and_update_entity() {
     entity.v2 = v2;
     FooStore::update(world, entity);
 
-    let read_values: FooEntity = world.get_entity(foo.k);
+    let read_values: FooEntity = FooStore::get_entity(@world, foo.k);
     assert!(read_values.v1 == v1 && read_values.v2 == v2);
 }
 
