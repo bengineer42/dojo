@@ -11,33 +11,31 @@ katana-core.workspace = true
 katana-db.workspace = true
 katana-node.workspace = true
 katana-primitives.workspace = true
-katana-rpc.workspace = true
-katana-rpc-api.workspace = true
 katana-slot-controller = { workspace = true, optional = true }
 
 alloy-primitives.workspace = true
 anyhow.workspace = true
+byte-unit = "5.1.4"
 clap.workspace = true
 clap_complete.workspace = true
-common.workspace = true
+comfy-table = "7.1.1"
 console.workspace = true
-dojo-metrics.workspace = true
+dojo-utils.workspace = true
 serde_json.workspace = true
 shellexpand = "3.1.0"
 tokio.workspace = true
 tracing.workspace = true
+tracing-log.workspace = true
 tracing-subscriber.workspace = true
 url.workspace = true
-comfy-table = "7.1.1"
-byte-unit = "5.1.4"
 
 [dev-dependencies]
 assert_matches.workspace = true
+starknet.workspace = true
 
 [features]
-default = [ "jemalloc", "messaging", "slot" ]
+default = [ "jemalloc", "slot" ]
 
-jemalloc = [ "dojo-metrics/jemalloc" ]
-messaging = [ "katana-node/messaging" ]
+jemalloc = [  ]
 slot = [ "dep:katana-slot-controller", "katana-primitives/slot" ]
 starknet-messaging = [ "katana-node/starknet-messaging" ]

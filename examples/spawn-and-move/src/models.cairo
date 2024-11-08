@@ -70,7 +70,7 @@ pub struct Position {
 
 // Every field inside a model must derive `Introspect` or `IntrospectPacked`.
 // `IntrospectPacked` can also be used into models that are only using `Introspect`.
-#[derive(Copy, Drop, Serde, Introspect)]
+#[derive(Copy, Drop, Serde, Introspect, PartialEq)]
 pub struct PlayerItem {
     pub item_id: u32,
     pub quantity: u32,
@@ -117,7 +117,7 @@ impl Vec2Impl of Vec2Trait {
 
 #[cfg(test)]
 mod tests {
-    use super::{Position, Vec2, Vec2Trait};
+    use super::{Vec2, Vec2Trait};
 
     #[test]
     #[available_gas(100000)]

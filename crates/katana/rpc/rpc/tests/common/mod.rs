@@ -1,3 +1,5 @@
+#![allow(unused)]
+
 use std::fs::File;
 use std::path::PathBuf;
 
@@ -5,9 +7,8 @@ use anyhow::{anyhow, Result};
 use katana_cairo::lang::starknet_classes::casm_contract_class::CasmContractClass;
 use katana_cairo::lang::starknet_classes::contract_class::ContractClass;
 use katana_primitives::conversion::rpc::CompiledClass;
-use starknet::accounts::Call;
 use starknet::core::types::contract::SierraClass;
-use starknet::core::types::{Felt, FlattenedSierraClass};
+use starknet::core::types::{Call, Felt, FlattenedSierraClass};
 use starknet::core::utils::get_selector_from_name;
 
 pub fn prepare_contract_declaration_params(
@@ -61,4 +62,30 @@ pub fn build_deploy_cairo1_contract_call(class_hash: Felt, salt: Felt) -> Call {
             .unwrap(),
         selector: get_selector_from_name("deployContract").unwrap(),
     }
+}
+
+/// Splits a Felt into two Felts, representing its lower and upper 128 bits.
+#[allow(unused)]
+pub fn split_felt(felt: Felt) -> (Felt, Felt) {
+    let low: Felt = (felt.to_biguint() & Felt::from(u128::MAX).to_biguint()).into();
+    let high = felt.to_biguint() >> 128;
+    (low, Felt::from(high))
+}
+
+/// Assert that the given error is a Starknet error from a
+/// [`AccountError`](starknet::accounts::AccountError).
+#[macro_export]
+macro_rules! assert_account_starknet_err {
+    ($err:expr, $api_err:pat) => {
+        assert_matches!($err, AccountError::Provider(ProviderError::StarknetError($api_err)))
+    };
+}
+
+/// Assert that the given error is a Starknet error from a
+/// [`ProviderError`](starknet::providers::ProviderError).
+#[macro_export]
+macro_rules! assert_provider_starknet_err {
+    ($err:expr, $api_err:pat) => {
+        assert_matches!($err, ProviderError::StarknetError($api_err))
+    };
 }

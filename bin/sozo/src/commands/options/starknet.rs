@@ -1,12 +1,14 @@
+use std::time::Duration;
+
 use anyhow::Result;
 use clap::Args;
-use dojo_world::metadata::Environment;
+use dojo_utils::env::STARKNET_RPC_URL_ENV_VAR;
+use dojo_world::config::Environment;
+use reqwest::ClientBuilder;
 use starknet::providers::jsonrpc::HttpTransport;
 use starknet::providers::JsonRpcClient;
 use tracing::trace;
 use url::Url;
-
-use super::STARKNET_RPC_URL_ENV_VAR;
 
 #[derive(Debug, Args, Clone)]
 #[command(next_help_heading = "Starknet options")]
@@ -19,13 +21,25 @@ pub struct StarknetOptions {
 }
 
 impl StarknetOptions {
+    /// The default request timeout in milliseconds. This is not the transaction inclusion timeout.
+    /// Refer to [`dojo_utils::tx::waiter::TransactionWaiter::DEFAULT_TIMEOUT`] for the transaction
+    /// inclusion timeout.
+    const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
+
+    /// Returns a [`JsonRpcClient`] and the rpc url.
+    ///
+    /// It would be convenient to have the rpc url retrievable from the Provider trait instead.
     pub fn provider(
         &self,
         env_metadata: Option<&Environment>,
-    ) -> Result<JsonRpcClient<HttpTransport>> {
+    ) -> Result<(JsonRpcClient<HttpTransport>, String)> {
         let url = self.url(env_metadata)?;
-        trace!(?url, "Creating JsonRpcClient with given RPC URL.");
-        Ok(JsonRpcClient::new(HttpTransport::new(url)))
+
+        let client =
+            ClientBuilder::default().timeout(Self::DEFAULT_REQUEST_TIMEOUT).build().unwrap();
+
+        let transport = HttpTransport::new_with_client(url.clone(), client);
+        Ok((JsonRpcClient::new(transport), url.to_string()))
     }
 
     // We dont check the env var because that would be handled by `clap`.
@@ -49,9 +63,9 @@ impl StarknetOptions {
 #[cfg(test)]
 mod tests {
     use clap::Parser;
+    use dojo_utils::env::STARKNET_RPC_URL_ENV_VAR;
 
     use super::StarknetOptions;
-    use crate::commands::options::STARKNET_RPC_URL_ENV_VAR;
 
     const ENV_RPC: &str = "http://localhost:7474/";
     const METADATA_RPC: &str = "http://localhost:6060/";
@@ -73,7 +87,7 @@ mod tests {
 
     #[test]
     fn url_exist_in_env_but_not_in_args() {
-        let env_metadata = dojo_world::metadata::Environment {
+        let env_metadata = dojo_world::config::Environment {
             rpc_url: Some(METADATA_RPC.into()),
             ..Default::default()
         };
@@ -84,7 +98,7 @@ mod tests {
 
     #[test]
     fn url_doesnt_exist_in_env_but_exist_in_args() {
-        let env_metadata = dojo_world::metadata::Environment::default();
+        let env_metadata = dojo_world::config::Environment::default();
         let cmd = Command::parse_from(["sozo", "--rpc-url", ENV_RPC]);
 
         assert_eq!(cmd.options.url(Some(&env_metadata)).unwrap().as_str(), ENV_RPC);
@@ -92,7 +106,7 @@ mod tests {
 
     #[test]
     fn url_exists_in_both() {
-        let env_metadata = dojo_world::metadata::Environment {
+        let env_metadata = dojo_world::config::Environment {
             rpc_url: Some(METADATA_RPC.into()),
             ..Default::default()
         };
@@ -103,7 +117,7 @@ mod tests {
 
     #[test]
     fn url_exists_in_neither() {
-        let env_metadata = dojo_world::metadata::Environment::default();
+        let env_metadata = dojo_world::config::Environment::default();
         let cmd = Command::parse_from([""]);
         assert_eq!(cmd.options.url(Some(&env_metadata)).unwrap().as_str(), DEFAULT_RPC);
     }

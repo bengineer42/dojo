@@ -10,37 +10,45 @@
 //!   documentation for usage details. This is **not recommended on Windows**. See [here](https://rust-lang.github.io/rfcs/1974-global-allocators.html#jemalloc)
 //!   for more info.
 
-use std::net::SocketAddr;
+use std::collections::HashSet;
+use std::net::{IpAddr, SocketAddr};
 use std::path::PathBuf;
 
 use alloy_primitives::U256;
 use anyhow::{Context, Result};
 use clap::{Args, Parser};
-use common::parse::parse_socket_address;
 use console::Style;
-use dojo_metrics::{metrics_process, prometheus_exporter};
-use katana_core::backend::config::{Environment, StarknetConfig};
-use katana_core::constants::{
-    DEFAULT_ETH_L1_GAS_PRICE, DEFAULT_INVOKE_MAX_STEPS, DEFAULT_SEQUENCER_ADDRESS,
-    DEFAULT_STRK_L1_GAS_PRICE, DEFAULT_VALIDATE_MAX_STEPS,
+use dojo_utils::parse::parse_socket_address;
+use katana_core::constants::DEFAULT_SEQUENCER_ADDRESS;
+use katana_core::service::messaging::MessagingConfig;
+use katana_node::config::db::DbConfig;
+use katana_node::config::dev::{DevConfig, FixedL1GasPriceConfig};
+use katana_node::config::execution::{
+    ExecutionConfig, DEFAULT_INVOCATION_MAX_STEPS, DEFAULT_VALIDATION_MAX_STEPS,
 };
-#[allow(deprecated)]
-use katana_core::sequencer::SequencerConfig;
-use katana_primitives::block::GasPrices;
+use katana_node::config::fork::ForkingConfig;
+use katana_node::config::metrics::MetricsConfig;
+use katana_node::config::rpc::{
+    ApiKind, RpcConfig, DEFAULT_RPC_ADDR, DEFAULT_RPC_MAX_CONNECTIONS, DEFAULT_RPC_PORT,
+};
+use katana_node::config::{Config, SequencingConfig};
+use katana_primitives::block::{BlockHashOrNumber, GasPrices};
 use katana_primitives::chain::ChainId;
+use katana_primitives::chain_spec::{self, ChainSpec};
 use katana_primitives::class::ClassHash;
 use katana_primitives::contract::ContractAddress;
 use katana_primitives::genesis::allocation::{DevAllocationsGenerator, GenesisAccountAlloc};
-use katana_primitives::genesis::constant::DEFAULT_PREFUNDED_ACCOUNT_BALANCE;
+use katana_primitives::genesis::constant::{
+    DEFAULT_LEGACY_ERC20_CLASS_HASH, DEFAULT_LEGACY_UDC_CLASS_HASH,
+    DEFAULT_PREFUNDED_ACCOUNT_BALANCE, DEFAULT_UDC_ADDRESS,
+};
 use katana_primitives::genesis::Genesis;
-use katana_rpc::config::ServerConfig;
-use katana_rpc_api::ApiKind;
-use tokio::signal::ctrl_c;
 use tracing::{info, Subscriber};
+use tracing_log::LogTracer;
 use tracing_subscriber::{fmt, EnvFilter};
 use url::Url;
 
-use crate::utils::{parse_genesis, parse_seed};
+use crate::utils::{parse_block_hash_or_number, parse_genesis, parse_seed};
 
 #[derive(Parser, Debug)]
 pub struct NodeArgs {
@@ -66,10 +74,16 @@ pub struct NodeArgs {
                        initialized Katana database.")]
     pub db_dir: Option<PathBuf>,
 
-    #[arg(long)]
-    #[arg(value_name = "URL")]
+    #[arg(long = "fork.rpc-url", value_name = "URL", alias = "rpc-url")]
     #[arg(help = "The Starknet RPC provider to fork the network from.")]
-    pub rpc_url: Option<Url>,
+    pub fork_rpc_url: Option<Url>,
+
+    #[arg(long = "fork.block", value_name = "BLOCK_ID", alias = "fork-block-number")]
+    #[arg(requires = "fork_rpc_url")]
+    #[arg(help = "Fork the network at a specific block id, can either be a hash (0x-prefixed) \
+                  or number.")]
+    #[arg(value_parser = parse_block_hash_or_number)]
+    pub fork_block: Option<BlockHashOrNumber>,
 
     #[arg(long)]
     pub dev: bool,
@@ -85,20 +99,13 @@ pub struct NodeArgs {
     pub metrics: Option<SocketAddr>,
 
     #[arg(long)]
-    #[arg(requires = "rpc_url")]
-    #[arg(value_name = "BLOCK_NUMBER")]
-    #[arg(help = "Fork the network at a specific block.")]
-    pub fork_block_number: Option<u64>,
-
-    #[cfg(feature = "messaging")]
-    #[arg(long)]
     #[arg(value_name = "PATH")]
     #[arg(value_parser = katana_core::service::messaging::MessagingConfig::parse)]
     #[arg(help = "Configure the messaging with an other chain.")]
     #[arg(long_help = "Configure the messaging to allow Katana listening/sending messages on a \
                        settlement chain that can be Ethereum or an other Starknet sequencer. \
                        The configuration file details and examples can be found here: https://book.dojoengine.org/toolchain/katana/reference#messaging")]
-    pub messaging: Option<katana_core::service::messaging::MessagingConfig>,
+    pub messaging: Option<MessagingConfig>,
 
     #[command(flatten)]
     #[command(next_help_heading = "Server options")]
@@ -117,16 +124,17 @@ pub struct NodeArgs {
 #[derive(Debug, Args, Clone)]
 pub struct ServerOptions {
     #[arg(short, long)]
-    #[arg(default_value = "5050")]
+    #[arg(default_value_t = DEFAULT_RPC_PORT)]
     #[arg(help = "Port number to listen on.")]
     pub port: u16,
 
     #[arg(long)]
+    #[arg(default_value_t = DEFAULT_RPC_ADDR)]
     #[arg(help = "The IP address the server will listen on.")]
-    pub host: Option<String>,
+    pub host: IpAddr,
 
     #[arg(long)]
-    #[arg(default_value = "100")]
+    #[arg(default_value_t = DEFAULT_RPC_MAX_CONNECTIONS)]
     #[arg(help = "Maximum number of concurrent connections allowed.")]
     pub max_connections: u32,
 
@@ -145,7 +153,7 @@ pub struct StarknetOptions {
 
     #[arg(long = "accounts")]
     #[arg(value_name = "NUM")]
-    #[arg(default_value = "10")]
+    #[arg(default_value_t = 10)]
     #[arg(help = "Number of pre-funded accounts to generate.")]
     pub total_accounts: u16,
 
@@ -163,7 +171,7 @@ pub struct StarknetOptions {
 
     #[arg(long)]
     #[arg(value_parser = parse_genesis)]
-    #[arg(conflicts_with_all(["rpc_url", "seed", "total_accounts"]))]
+    #[arg(conflicts_with_all(["fork_rpc_url", "seed", "total_accounts"]))]
     pub genesis: Option<Genesis>,
 }
 
@@ -174,31 +182,36 @@ pub struct EnvironmentOptions {
     #[arg(long_help = "The chain ID. If a raw hex string (`0x` prefix) is provided, then it'd \
                        used as the actual chain ID. Otherwise, it's represented as the raw \
                        ASCII values. It must be a valid Cairo short string.")]
-    #[arg(default_value = "KATANA")]
     #[arg(value_parser = ChainId::parse)]
-    pub chain_id: ChainId,
+    pub chain_id: Option<ChainId>,
 
     #[arg(long)]
     #[arg(help = "The maximum number of steps available for the account validation logic.")]
-    #[arg(default_value_t = DEFAULT_VALIDATE_MAX_STEPS)]
-    pub validate_max_steps: u32,
+    pub validate_max_steps: Option<u32>,
 
     #[arg(long)]
     #[arg(help = "The maximum number of steps available for the account execution logic.")]
-    #[arg(default_value_t = DEFAULT_INVOKE_MAX_STEPS)]
-    pub invoke_max_steps: u32,
+    pub invoke_max_steps: Option<u32>,
 
-    #[arg(long = "eth-gas-price")]
-    #[arg(conflicts_with = "genesis")]
+    #[arg(long = "l1-eth-gas-price", value_name = "WEI")]
     #[arg(help = "The L1 ETH gas price. (denominated in wei)")]
-    #[arg(default_value_t = DEFAULT_ETH_L1_GAS_PRICE)]
-    pub l1_eth_gas_price: u128,
+    #[arg(requires = "l1_strk_gas_price")]
+    pub l1_eth_gas_price: Option<u128>,
 
-    #[arg(long = "strk-gas-price")]
-    #[arg(conflicts_with = "genesis")]
+    #[arg(long = "l1-strk-gas-price", value_name = "FRI")]
+    #[arg(requires = "l1_eth_data_gas_price")]
     #[arg(help = "The L1 STRK gas price. (denominated in fri)")]
-    #[arg(default_value_t = DEFAULT_STRK_L1_GAS_PRICE)]
-    pub l1_strk_gas_price: u128,
+    pub l1_strk_gas_price: Option<u128>,
+
+    #[arg(long = "l1-eth-data-gas-price", value_name = "WEI")]
+    #[arg(requires = "l1_strk_data_gas_price")]
+    #[arg(help = "The L1 ETH gas price. (denominated in wei)")]
+    pub l1_eth_data_gas_price: Option<u128>,
+
+    #[arg(long = "l1-strk-data-gas-price", value_name = "FRI")]
+    #[arg(requires = "l1_eth_gas_price")]
+    #[arg(help = "The L1 STRK gas prick. (denominated in fri)")]
+    pub l1_strk_data_gas_price: Option<u128>,
 }
 
 #[cfg(feature = "slot")]
@@ -222,44 +235,38 @@ impl NodeArgs {
     }
 
     async fn start_node(self) -> Result<()> {
-        let server_config = self.server_config();
-        let sequencer_config = self.sequencer_config();
-        let starknet_config = self.starknet_config()?;
-
-        // TODO: move to katana-node
-        if let Some(listen_addr) = self.metrics {
-            let prometheus_handle = prometheus_exporter::install_recorder("katana")?;
-
-            info!(target: LOG_TARGET, addr = %listen_addr, "Starting metrics endpoint.");
-            prometheus_exporter::serve(
-                listen_addr,
-                prometheus_handle,
-                metrics_process::Collector::default(),
-            )
-            .await?;
-        }
-
-        // build the node and start it
-        let (rpc_handle, backend) =
-            katana_node::start(server_config, sequencer_config, starknet_config).await?;
+        // Build the node
+        let config = self.config()?;
+        let node = katana_node::build(config).await.context("failed to build node")?;
 
         if !self.silent {
-            #[allow(deprecated)]
-            let genesis = &backend.config.genesis;
-            print_intro(&self, genesis, rpc_handle.addr);
+            print_intro(&self, &node.backend.chain_spec);
         }
 
-        // Wait until Ctrl + C is pressed, then shutdown
-        ctrl_c().await?;
-        rpc_handle.handle.stop()?;
+        // Launch the node
+        let handle = node.launch().await.context("failed to launch node")?;
+
+        // Wait until an OS signal (ie SIGINT, SIGTERM) is received or the node is shutdown.
+        tokio::select! {
+            _ = dojo_utils::signal::wait_signals() => {
+                // Gracefully shutdown the node before exiting
+                handle.stop().await?;
+            },
+
+            _ = handle.stopped() => { }
+        }
+
+        info!("Shutting down.");
 
         Ok(())
     }
 
     fn init_logging(&self) -> Result<()> {
-        const DEFAULT_LOG_FILTER: &str = "info,executor=trace,forking::backend=trace,server=debug,\
-                                          katana_core=trace,blockifier=off,jsonrpsee_server=off,\
+        const DEFAULT_LOG_FILTER: &str = "info,tasks=debug,executor=trace,forking::backend=trace,\
+                                          server=debug,blockifier=off,jsonrpsee_server=off,\
                                           hyper=off,messaging=debug,node=error";
+
+        LogTracer::init()?;
 
         let builder = fmt::Subscriber::builder().with_env_filter(
             EnvFilter::try_from_default_env().or(EnvFilter::try_new(DEFAULT_LOG_FILTER))?,
@@ -274,80 +281,129 @@ impl NodeArgs {
         Ok(tracing::subscriber::set_global_default(subscriber)?)
     }
 
-    #[allow(deprecated)]
-    fn sequencer_config(&self) -> SequencerConfig {
-        SequencerConfig {
-            block_time: self.block_time,
-            no_mining: self.no_mining,
-            #[cfg(feature = "messaging")]
-            messaging: self.messaging.clone(),
-        }
+    fn config(&self) -> Result<katana_node::config::Config> {
+        let db = self.db_config();
+        let rpc = self.rpc_config();
+        let dev = self.dev_config();
+        let chain = self.chain_spec()?;
+        let metrics = self.metrics_config();
+        let forking = self.forking_config()?;
+        let execution = self.execution_config();
+        let sequencing = self.sequencer_config();
+        let messaging = self.messaging.clone();
+
+        Ok(Config { metrics, db, dev, rpc, chain, execution, sequencing, messaging, forking })
     }
 
-    fn server_config(&self) -> ServerConfig {
-        let mut apis = vec![ApiKind::Starknet, ApiKind::Katana, ApiKind::Torii, ApiKind::Saya];
+    fn sequencer_config(&self) -> SequencingConfig {
+        SequencingConfig { block_time: self.block_time, no_mining: self.no_mining }
+    }
+
+    fn rpc_config(&self) -> RpcConfig {
+        let mut apis = HashSet::from([ApiKind::Starknet, ApiKind::Torii, ApiKind::Saya]);
         // only enable `katana` API in dev mode
         if self.dev {
-            apis.push(ApiKind::Dev);
+            apis.insert(ApiKind::Dev);
         }
 
-        ServerConfig {
+        RpcConfig {
             apis,
             port: self.server.port,
-            host: self.server.host.clone().unwrap_or("0.0.0.0".into()),
+            addr: self.server.host,
             max_connections: self.server.max_connections,
             allowed_origins: self.server.allowed_origins.clone(),
         }
     }
 
-    fn starknet_config(&self) -> Result<StarknetConfig> {
-        let genesis = match self.starknet.genesis.clone() {
-            Some(genesis) => genesis,
-            None => {
-                let gas_prices = GasPrices {
-                    eth: self.starknet.environment.l1_eth_gas_price,
-                    strk: self.starknet.environment.l1_strk_gas_price,
-                };
+    fn chain_spec(&self) -> Result<ChainSpec> {
+        let mut chain_spec = chain_spec::DEV_UNALLOCATED.clone();
 
-                let accounts = DevAllocationsGenerator::new(self.starknet.total_accounts)
-                    .with_seed(parse_seed(&self.starknet.seed))
-                    .with_balance(U256::from(DEFAULT_PREFUNDED_ACCOUNT_BALANCE))
-                    .generate();
+        if let Some(id) = self.starknet.environment.chain_id {
+            chain_spec.id = id;
+        }
 
-                let mut genesis = Genesis {
-                    gas_prices,
-                    sequencer_address: *DEFAULT_SEQUENCER_ADDRESS,
-                    ..Default::default()
-                };
+        if let Some(genesis) = self.starknet.genesis.clone() {
+            chain_spec.genesis = genesis;
+        } else {
+            chain_spec.genesis.sequencer_address = *DEFAULT_SEQUENCER_ADDRESS;
+        }
 
-                #[cfg(feature = "slot")]
-                if self.slot.controller {
-                    katana_slot_controller::add_controller_account(&mut genesis)?;
-                }
+        // generate dev accounts
+        let accounts = DevAllocationsGenerator::new(self.starknet.total_accounts)
+            .with_seed(parse_seed(&self.starknet.seed))
+            .with_balance(U256::from(DEFAULT_PREFUNDED_ACCOUNT_BALANCE))
+            .generate();
 
-                genesis.extend_allocations(accounts.into_iter().map(|(k, v)| (k, v.into())));
-                genesis
-            }
+        chain_spec.genesis.extend_allocations(accounts.into_iter().map(|(k, v)| (k, v.into())));
+
+        #[cfg(feature = "slot")]
+        if self.slot.controller {
+            katana_slot_controller::add_controller_account(&mut chain_spec.genesis)?;
+        }
+
+        Ok(chain_spec)
+    }
+
+    fn dev_config(&self) -> DevConfig {
+        let fixed_gas_prices = if self.starknet.environment.l1_eth_gas_price.is_some() {
+            // It is safe to unwrap all of these here because the CLI parser ensures if one is set,
+            // all must be set.
+
+            let eth_gas_price = self.starknet.environment.l1_eth_gas_price.unwrap();
+            let strk_gas_price = self.starknet.environment.l1_strk_gas_price.unwrap();
+            let eth_data_gas_price = self.starknet.environment.l1_eth_data_gas_price.unwrap();
+            let strk_data_gas_price = self.starknet.environment.l1_strk_data_gas_price.unwrap();
+
+            let gas_price = GasPrices { eth: eth_gas_price, strk: strk_gas_price };
+            let data_gas_price = GasPrices { eth: eth_data_gas_price, strk: strk_data_gas_price };
+
+            Some(FixedL1GasPriceConfig { gas_price, data_gas_price })
+        } else {
+            None
         };
 
-        Ok(StarknetConfig {
-            disable_fee: self.starknet.disable_fee,
-            disable_validate: self.starknet.disable_validate,
-            fork_rpc_url: self.rpc_url.clone(),
-            fork_block_number: self.fork_block_number,
-            env: Environment {
-                chain_id: self.starknet.environment.chain_id,
-                invoke_max_steps: self.starknet.environment.invoke_max_steps,
-                validate_max_steps: self.starknet.environment.validate_max_steps,
-            },
-            db_dir: self.db_dir.clone(),
-            genesis,
-        })
+        DevConfig {
+            fixed_gas_prices,
+            fee: !self.starknet.disable_fee,
+            account_validation: !self.starknet.disable_validate,
+        }
+    }
+
+    fn execution_config(&self) -> ExecutionConfig {
+        ExecutionConfig {
+            invocation_max_steps: self
+                .starknet
+                .environment
+                .invoke_max_steps
+                .unwrap_or(DEFAULT_INVOCATION_MAX_STEPS),
+            validation_max_steps: self
+                .starknet
+                .environment
+                .validate_max_steps
+                .unwrap_or(DEFAULT_VALIDATION_MAX_STEPS),
+            ..Default::default()
+        }
+    }
+
+    fn forking_config(&self) -> Result<Option<ForkingConfig>> {
+        if let Some(url) = self.fork_rpc_url.clone() {
+            Ok(Some(ForkingConfig { url, block: self.fork_block }))
+        } else {
+            Ok(None)
+        }
+    }
+
+    fn db_config(&self) -> DbConfig {
+        DbConfig { dir: self.db_dir.clone() }
+    }
+
+    fn metrics_config(&self) -> Option<MetricsConfig> {
+        self.metrics.map(|addr| MetricsConfig { addr })
     }
 }
 
-fn print_intro(args: &NodeArgs, genesis: &Genesis, address: SocketAddr) {
-    let mut accounts = genesis.accounts().peekable();
+fn print_intro(args: &NodeArgs, chain: &ChainSpec) {
+    let mut accounts = chain.genesis.accounts().peekable();
     let account_class_hash = accounts.peek().map(|e| e.1.class_hash());
     let seed = &args.starknet.seed;
 
@@ -358,7 +414,6 @@ fn print_intro(args: &NodeArgs, genesis: &Genesis, address: SocketAddr) {
             serde_json::json!({
                 "accounts": accounts.map(|a| serde_json::json!(a)).collect::<Vec<_>>(),
                 "seed": format!("{}", seed),
-                "address": format!("{address}"),
             })
         )
     } else {
@@ -378,7 +433,7 @@ fn print_intro(args: &NodeArgs, genesis: &Genesis, address: SocketAddr) {
             )
         );
 
-        print_genesis_contracts(genesis, account_class_hash);
+        print_genesis_contracts(chain, account_class_hash);
         print_genesis_accounts(accounts);
 
         println!(
@@ -389,37 +444,35 @@ ACCOUNTS SEED
 {seed}
     "
         );
-
-        let addr = format!(
-            "🚀 JSON-RPC server started: {}",
-            Style::new().red().apply_to(format!("http://{address}"))
-        );
-
-        println!("\n{addr}\n\n",);
     }
 }
 
-fn print_genesis_contracts(genesis: &Genesis, account_class_hash: Option<ClassHash>) {
+fn print_genesis_contracts(chain: &ChainSpec, account_class_hash: Option<ClassHash>) {
     println!(
         r"
 PREDEPLOYED CONTRACTS
 ==================
 
-| Contract        | Fee Token
+| Contract        | ETH Fee Token
+| Address         | {}
+| Class Hash      | {:#064x}
+
+| Contract        | STRK Fee Token
 | Address         | {}
 | Class Hash      | {:#064x}",
-        genesis.fee_token.address, genesis.fee_token.class_hash,
+        chain.fee_contracts.eth,
+        DEFAULT_LEGACY_ERC20_CLASS_HASH,
+        chain.fee_contracts.strk,
+        DEFAULT_LEGACY_ERC20_CLASS_HASH
     );
 
-    if let Some(ref udc) = genesis.universal_deployer {
-        println!(
-            r"
+    println!(
+        r"
 | Contract        | Universal Deployer
 | Address         | {}
 | Class Hash      | {:#064x}",
-            udc.address, udc.class_hash
-        )
-    }
+        DEFAULT_UDC_ADDRESS, DEFAULT_LEGACY_UDC_CLASS_HASH
+    );
 
     if let Some(hash) = account_class_hash {
         println!(
@@ -463,24 +516,24 @@ PREFUNDED ACCOUNTS
 
 #[cfg(test)]
 mod test {
+    use assert_matches::assert_matches;
+    use katana_primitives::{address, felt};
+
     use super::*;
 
     #[test]
     fn test_starknet_config_default() {
         let args = NodeArgs::parse_from(["katana"]);
-        let config = args.starknet_config().unwrap();
+        let config = args.config().unwrap();
 
-        assert!(!config.disable_fee);
-        assert!(!config.disable_validate);
-        assert_eq!(config.fork_rpc_url, None);
-        assert_eq!(config.fork_block_number, None);
-        assert_eq!(config.env.chain_id, ChainId::parse("KATANA").unwrap());
-        assert_eq!(config.env.invoke_max_steps, DEFAULT_INVOKE_MAX_STEPS);
-        assert_eq!(config.env.validate_max_steps, DEFAULT_VALIDATE_MAX_STEPS);
-        assert_eq!(config.db_dir, None);
-        assert_eq!(config.genesis.gas_prices.eth, DEFAULT_ETH_L1_GAS_PRICE);
-        assert_eq!(config.genesis.gas_prices.strk, DEFAULT_STRK_L1_GAS_PRICE);
-        assert_eq!(config.genesis.sequencer_address, *DEFAULT_SEQUENCER_ADDRESS);
+        assert!(config.dev.fee);
+        assert!(config.dev.account_validation);
+        assert!(config.forking.is_none());
+        assert_eq!(config.execution.invocation_max_steps, DEFAULT_INVOCATION_MAX_STEPS);
+        assert_eq!(config.execution.validation_max_steps, DEFAULT_VALIDATION_MAX_STEPS);
+        assert_eq!(config.db.dir, None);
+        assert_eq!(config.chain.id, ChainId::parse("KATANA").unwrap());
+        assert_eq!(config.chain.genesis.sequencer_address, *DEFAULT_SEQUENCER_ADDRESS);
     }
 
     #[test]
@@ -497,20 +550,87 @@ mod test {
             "100",
             "--db-dir",
             "/path/to/db",
-            "--eth-gas-price",
-            "10",
-            "--strk-gas-price",
-            "20",
         ]);
-        let config = args.starknet_config().unwrap();
+        let config = args.config().unwrap();
 
-        assert!(config.disable_fee);
-        assert!(config.disable_validate);
-        assert_eq!(config.env.chain_id, ChainId::GOERLI);
-        assert_eq!(config.env.invoke_max_steps, 200);
-        assert_eq!(config.env.validate_max_steps, 100);
-        assert_eq!(config.db_dir, Some(PathBuf::from("/path/to/db")));
-        assert_eq!(config.genesis.gas_prices.eth, 10);
-        assert_eq!(config.genesis.gas_prices.strk, 20);
+        assert!(!config.dev.fee);
+        assert!(!config.dev.account_validation);
+        assert_eq!(config.execution.invocation_max_steps, 200);
+        assert_eq!(config.execution.validation_max_steps, 100);
+        assert_eq!(config.db.dir, Some(PathBuf::from("/path/to/db")));
+        assert_eq!(config.chain.id, ChainId::GOERLI);
+        assert_eq!(config.chain.genesis.sequencer_address, *DEFAULT_SEQUENCER_ADDRESS);
+    }
+
+    #[test]
+    fn custom_fixed_gas_prices() {
+        let args = NodeArgs::parse_from([
+            "katana",
+            "--disable-fee",
+            "--disable-validate",
+            "--chain-id",
+            "SN_GOERLI",
+            "--invoke-max-steps",
+            "200",
+            "--validate-max-steps",
+            "100",
+            "--db-dir",
+            "/path/to/db",
+            "--l1-eth-gas-price",
+            "10",
+            "--l1-strk-gas-price",
+            "20",
+            "--l1-eth-data-gas-price",
+            "1",
+            "--l1-strk-data-gas-price",
+            "2",
+        ]);
+        let config = args.config().unwrap();
+
+        assert!(!config.dev.fee);
+        assert!(!config.dev.account_validation);
+        assert_eq!(config.execution.invocation_max_steps, 200);
+        assert_eq!(config.execution.validation_max_steps, 100);
+        assert_eq!(config.db.dir, Some(PathBuf::from("/path/to/db")));
+        assert_eq!(config.chain.id, ChainId::GOERLI);
+        assert_matches!(config.dev.fixed_gas_prices, Some(prices) => {
+            assert_eq!(prices.gas_price.eth, 10);
+            assert_eq!(prices.gas_price.strk, 20);
+            assert_eq!(prices.data_gas_price.eth, 1);
+            assert_eq!(prices.data_gas_price.strk, 2);
+        })
+    }
+
+    #[test]
+    fn genesis_with_fixed_gas_prices() {
+        let config = NodeArgs::parse_from([
+            "katana",
+            "--genesis",
+            "./tests/test-data/genesis.json",
+            "--l1-eth-gas-price",
+            "100",
+            "--l1-strk-gas-price",
+            "200",
+            "--l1-eth-data-gas-price",
+            "111",
+            "--l1-strk-data-gas-price",
+            "222",
+        ])
+        .config()
+        .unwrap();
+
+        assert_eq!(config.chain.genesis.number, 0);
+        assert_eq!(config.chain.genesis.parent_hash, felt!("0x999"));
+        assert_eq!(config.chain.genesis.timestamp, 5123512314);
+        assert_eq!(config.chain.genesis.state_root, felt!("0x99"));
+        assert_eq!(config.chain.genesis.sequencer_address, address!("0x100"));
+        assert_eq!(config.chain.genesis.gas_prices.eth, 9999);
+        assert_eq!(config.chain.genesis.gas_prices.strk, 8888);
+        assert_matches!(config.dev.fixed_gas_prices, Some(prices) => {
+            assert_eq!(prices.gas_price.eth, 100);
+            assert_eq!(prices.gas_price.strk, 200);
+            assert_eq!(prices.data_gas_price.eth, 111);
+            assert_eq!(prices.data_gas_price.strk, 222);
+        })
     }
 }

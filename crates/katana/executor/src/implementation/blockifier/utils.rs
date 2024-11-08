@@ -1,8 +1,9 @@
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
 use std::num::NonZeroU128;
 use std::sync::Arc;
 
 use blockifier::blockifier::block::{BlockInfo, GasPrices};
+use blockifier::bouncer::BouncerConfig;
 use blockifier::context::{BlockContext, ChainInfo, FeeTokenAddresses, TransactionContext};
 use blockifier::execution::call_info::{
     CallExecution, CallInfo, OrderedEvent, OrderedL2ToL1Message,
@@ -44,44 +45,49 @@ use katana_cairo::starknet_api::transaction::{
 };
 use katana_primitives::chain::NamedChainId;
 use katana_primitives::env::{BlockEnv, CfgEnv};
-use katana_primitives::fee::TxFeeInfo;
+use katana_primitives::fee::{PriceUnit, TxFeeInfo};
 use katana_primitives::state::{StateUpdates, StateUpdatesWithDeclaredClasses};
 use katana_primitives::trace::{L1Gas, TxExecInfo, TxResources};
 use katana_primitives::transaction::{
-    DeclareTx, DeployAccountTx, ExecutableTx, ExecutableTxWithHash, InvokeTx,
+    DeclareTx, DeployAccountTx, ExecutableTx, ExecutableTxWithHash, InvokeTx, TxType,
 };
-use katana_primitives::{class, event, message, trace, FieldElement};
+use katana_primitives::{class, event, message, trace, Felt};
 use katana_provider::traits::contract::ContractClassProvider;
-use starknet::core::types::PriceUnit;
 use starknet::core::utils::parse_cairo_short_string;
 
 use super::state::{CachedState, StateDb};
-use crate::abstraction::{EntryPointCall, SimulationFlag};
+use crate::abstraction::{EntryPointCall, ExecutionFlags};
 use crate::utils::build_receipt;
 use crate::{ExecutionError, ExecutionResult};
 
 pub fn transact<S: StateReader>(
     state: &mut cached_state::CachedState<S>,
     block_context: &BlockContext,
-    simulation_flags: &SimulationFlag,
+    simulation_flags: &ExecutionFlags,
     tx: ExecutableTxWithHash,
 ) -> ExecutionResult {
     fn transact_inner<S: StateReader>(
         state: &mut cached_state::CachedState<S>,
         block_context: &BlockContext,
-        simulation_flags: &SimulationFlag,
+        simulation_flags: &ExecutionFlags,
         tx: Transaction,
     ) -> Result<(TransactionExecutionInfo, TxFeeInfo), ExecutionError> {
-        let validate = !simulation_flags.skip_validate;
-        let charge_fee = !simulation_flags.skip_fee_transfer;
+        let validate = simulation_flags.account_validation();
+        let charge_fee = simulation_flags.fee();
+        // Blockifier doesn't provide a way to fully skip nonce check during the tx validation
+        // stage. The `nonce_check` flag in `tx.execute()` only 'relaxes' the check for
+        // nonce that is equal or higher than the current (expected) account nonce.
+        //
+        // Related commit on Blockifier: https://github.com/dojoengine/blockifier/commit/2410b6055453f247d48759f223c34b3fb5fa777
+        let nonce_check = simulation_flags.nonce_check();
 
         let fee_type = get_fee_type_from_tx(&tx);
         let info = match tx {
             Transaction::AccountTransaction(tx) => {
-                tx.execute(state, block_context, charge_fee, validate)
+                tx.execute(state, block_context, charge_fee, validate, nonce_check)
             }
             Transaction::L1HandlerTransaction(tx) => {
-                tx.execute(state, block_context, charge_fee, validate)
+                tx.execute(state, block_context, charge_fee, validate, nonce_check)
             }
         }?;
 
@@ -119,7 +125,7 @@ pub fn transact<S: StateReader>(
     match transact_inner(state, block_context, simulation_flags, to_executor_tx(tx.clone())) {
         Ok((info, fee)) => {
             // get the trace and receipt from the execution info
-            let trace = to_exec_info(info);
+            let trace = to_exec_info(info, tx.r#type());
             let receipt = build_receipt(tx.tx_ref(), fee, &trace);
             ExecutionResult::new_success(receipt, trace)
         }
@@ -134,7 +140,7 @@ pub fn call<S: StateReader>(
     state: S,
     block_context: &BlockContext,
     initial_gas: u128,
-) -> Result<Vec<FieldElement>, ExecutionError> {
+) -> Result<Vec<Felt>, ExecutionError> {
     let mut state = cached_state::CachedState::new(state);
 
     let call = CallEntryPoint {
@@ -173,7 +179,7 @@ pub fn call<S: StateReader>(
     Ok(res.execution.retdata.0)
 }
 
-fn to_executor_tx(tx: ExecutableTxWithHash) -> Transaction {
+pub fn to_executor_tx(tx: ExecutableTxWithHash) -> Transaction {
     let hash = tx.hash;
 
     match tx.transaction {
@@ -386,7 +392,7 @@ pub fn block_context_from_envs(block_env: &BlockEnv, cfg_env: &CfgEnv) -> BlockC
     versioned_constants.validate_max_n_steps = cfg_env.validate_max_n_steps;
     versioned_constants.invoke_tx_max_n_steps = cfg_env.invoke_tx_max_n_steps;
 
-    BlockContext::new(block_info, chain_info, versioned_constants, Default::default())
+    BlockContext::new(block_info, chain_info, versioned_constants, BouncerConfig::max())
 }
 
 pub(super) fn state_update_from_cached_state<S: StateDb>(
@@ -396,12 +402,15 @@ pub(super) fn state_update_from_cached_state<S: StateDb>(
 
     let state_diff = state.0.lock().inner.to_state_diff().unwrap();
 
-    let mut declared_compiled_classes: HashMap<katana_primitives::class::ClassHash, CompiledClass> =
-        HashMap::new();
-    let mut declared_sierra_classes: HashMap<
+    let mut declared_compiled_classes: BTreeMap<
+        katana_primitives::class::ClassHash,
+        CompiledClass,
+    > = BTreeMap::new();
+
+    let mut declared_sierra_classes: BTreeMap<
         katana_primitives::class::ClassHash,
         FlattenedSierraClass,
-    > = HashMap::new();
+    > = BTreeMap::new();
 
     for class_hash in state_diff.compiled_class_hashes.keys() {
         let hash = class_hash.0;
@@ -420,27 +429,29 @@ pub(super) fn state_update_from_cached_state<S: StateDb>(
             .nonces
             .into_iter()
             .map(|(key, value)| (to_address(key), value.0))
-            .collect::<HashMap<
+            .collect::<BTreeMap<
                 katana_primitives::contract::ContractAddress,
                 katana_primitives::contract::Nonce,
             >>();
 
-    let storage_updates =
-        state_diff.storage.into_iter().fold(HashMap::new(), |mut storage, ((addr, key), value)| {
-            let entry: &mut HashMap<
+    let storage_updates = state_diff.storage.into_iter().fold(
+        BTreeMap::new(),
+        |mut storage, ((addr, key), value)| {
+            let entry: &mut BTreeMap<
                 katana_primitives::contract::StorageKey,
                 katana_primitives::contract::StorageValue,
             > = storage.entry(to_address(addr)).or_default();
             entry.insert(*key.0.key(), value);
             storage
-        });
+        },
+    );
 
-    let contract_updates =
+    let deployed_contracts =
         state_diff
             .class_hashes
             .into_iter()
             .map(|(key, value)| (to_address(key), value.0))
-            .collect::<HashMap<
+            .collect::<BTreeMap<
                 katana_primitives::contract::ContractAddress,
                 katana_primitives::class::ClassHash,
             >>();
@@ -450,7 +461,7 @@ pub(super) fn state_update_from_cached_state<S: StateDb>(
             .compiled_class_hashes
             .into_iter()
             .map(|(key, value)| (key.0, value.0))
-            .collect::<HashMap<
+            .collect::<BTreeMap<
                 katana_primitives::class::ClassHash,
                 katana_primitives::class::CompiledClassHash,
             >>();
@@ -461,21 +472,22 @@ pub(super) fn state_update_from_cached_state<S: StateDb>(
         state_updates: StateUpdates {
             nonce_updates,
             storage_updates,
-            contract_updates,
+            deployed_contracts,
             declared_classes,
+            ..Default::default()
         },
     }
 }
 
-fn to_api_da_mode(mode: starknet::core::types::DataAvailabilityMode) -> DataAvailabilityMode {
+fn to_api_da_mode(mode: katana_primitives::da::DataAvailabilityMode) -> DataAvailabilityMode {
     match mode {
-        starknet::core::types::DataAvailabilityMode::L1 => DataAvailabilityMode::L1,
-        starknet::core::types::DataAvailabilityMode::L2 => DataAvailabilityMode::L2,
+        katana_primitives::da::DataAvailabilityMode::L1 => DataAvailabilityMode::L1,
+        katana_primitives::da::DataAvailabilityMode::L2 => DataAvailabilityMode::L2,
     }
 }
 
 fn to_api_resource_bounds(
-    resource_bounds: starknet::core::types::ResourceBoundsMapping,
+    resource_bounds: katana_primitives::fee::ResourceBoundsMapping,
 ) -> ResourceBoundsMapping {
     let l1_gas = ResourceBounds {
         max_amount: resource_bounds.l1_gas.max_amount,
@@ -543,24 +555,25 @@ pub fn to_class(class: class::CompiledClass) -> Result<ClassInfo, ProgramError> 
 }
 
 /// TODO: remove this function once starknet api 0.8.0 is supported.
-fn starknet_api_ethaddr_to_felt(
-    value: katana_cairo::starknet_api::core::EthAddress,
-) -> FieldElement {
+fn starknet_api_ethaddr_to_felt(value: katana_cairo::starknet_api::core::EthAddress) -> Felt {
     let mut bytes = [0u8; 32];
     // Padding H160 with zeros to 32 bytes (big endian)
     bytes[12..32].copy_from_slice(value.0.as_bytes());
-    FieldElement::from_bytes_be(&bytes)
+    Felt::from_bytes_be(&bytes)
 }
 
-pub fn to_exec_info(exec_info: TransactionExecutionInfo) -> TxExecInfo {
+pub fn to_exec_info(exec_info: TransactionExecutionInfo, r#type: TxType) -> TxExecInfo {
     TxExecInfo {
+        r#type,
         validate_call_info: exec_info.validate_call_info.map(to_call_info),
         execute_call_info: exec_info.execute_call_info.map(to_call_info),
         fee_transfer_call_info: exec_info.fee_transfer_call_info.map(to_call_info),
         actual_fee: exec_info.transaction_receipt.fee.0,
         revert_error: exec_info.revert_error.clone(),
         actual_resources: TxResources {
-            vm_resources: exec_info.transaction_receipt.resources.vm_resources,
+            vm_resources: to_execution_resources(
+                exec_info.transaction_receipt.resources.vm_resources,
+            ),
             n_reverted_steps: exec_info.transaction_receipt.resources.n_reverted_steps,
             data_availability: L1Gas {
                 l1_gas: exec_info.transaction_receipt.da_gas.l1_data_gas,
@@ -614,7 +627,7 @@ fn to_call_info(call: CallInfo) -> trace::CallInfo {
         entry_point_type,
         calldata,
         retdata,
-        execution_resources: call.resources,
+        execution_resources: to_execution_resources(call.resources),
         events,
         l2_to_l1_messages: l1_msg,
         storage_read_values,
@@ -643,17 +656,27 @@ fn to_l2_l1_messages(
     message::OrderedL2ToL1Message { order, from_address, to_address, payload }
 }
 
+fn to_execution_resources(
+    resources: ExecutionResources,
+) -> katana_primitives::trace::ExecutionResources {
+    katana_primitives::trace::ExecutionResources {
+        n_steps: resources.n_steps,
+        n_memory_holes: resources.n_memory_holes,
+        builtin_instance_counter: resources.builtin_instance_counter,
+    }
+}
+
 #[cfg(test)]
 mod tests {
 
-    use std::collections::HashSet;
+    use std::collections::{HashMap, HashSet};
 
     use katana_cairo::cairo_vm::types::builtin_name::BuiltinName;
     use katana_cairo::cairo_vm::vm::runners::cairo_runner::ExecutionResources;
     use katana_cairo::starknet_api::core::EntryPointSelector;
     use katana_cairo::starknet_api::felt;
     use katana_cairo::starknet_api::transaction::{EventContent, EventData, EventKey};
-    use katana_primitives::felt::FieldElement;
+    use katana_primitives::Felt;
 
     use super::*;
 
@@ -687,7 +710,7 @@ mod tests {
         //
         // This is how blockifier pass the chain id to the contract through a syscall.
         // https://github.com/dojoengine/blockifier/blob/f2246ce2862d043e4efe2ecf149a4cb7bee689cd/crates/blockifier/src/execution/syscalls/hint_processor.rs#L600-L602
-        let actual_id = FieldElement::from_hex(blockifier_id.as_hex().as_str()).unwrap();
+        let actual_id = Felt::from_hex(blockifier_id.as_hex().as_str()).unwrap();
 
         assert_eq!(actual_id, id)
     }
@@ -786,7 +809,7 @@ mod tests {
         };
 
         let expected_storage_read_values = call.storage_read_values.clone();
-        let expected_storage_keys: HashSet<FieldElement> =
+        let expected_storage_keys: HashSet<Felt> =
             call.accessed_storage_keys.iter().map(|v| *v.key()).collect();
         let expected_inner_calls: Vec<_> =
             call.inner_calls.clone().into_iter().map(to_call_info).collect();

@@ -1,5 +1,6 @@
 use jsonrpsee::core::{async_trait, RpcResult};
 use katana_executor::ExecutorFactory;
+use katana_pool::TransactionPool;
 use katana_primitives::transaction::{ExecutableTx, ExecutableTxWithHash};
 use katana_rpc_api::starknet::StarknetWriteApiServer;
 use katana_rpc_types::error::starknet::StarknetApiError;
@@ -20,12 +21,11 @@ impl<EF: ExecutorFactory> StarknetApi<EF> {
                 return Err(StarknetApiError::UnsupportedTransactionVersion);
             }
 
-            let tx = tx.into_tx_with_chain_id(this.inner.backend.chain_id);
+            let tx = tx.into_tx_with_chain_id(this.inner.backend.chain_spec.id);
             let tx = ExecutableTxWithHash::new(ExecutableTx::Invoke(tx));
-            let tx_hash = tx.hash;
+            let hash = this.inner.pool.add_transaction(tx)?;
 
-            this.inner.pool.add_transaction(tx);
-            Ok(tx_hash.into())
+            Ok(hash.into())
         })
         .await
     }
@@ -40,15 +40,14 @@ impl<EF: ExecutorFactory> StarknetApi<EF> {
             }
 
             let tx = tx
-                .try_into_tx_with_chain_id(this.inner.backend.chain_id)
+                .try_into_tx_with_chain_id(this.inner.backend.chain_spec.id)
                 .map_err(|_| StarknetApiError::InvalidContractClass)?;
 
             let class_hash = tx.class_hash();
             let tx = ExecutableTxWithHash::new(ExecutableTx::Declare(tx));
-            let tx_hash = tx.hash;
+            let hash = this.inner.pool.add_transaction(tx)?;
 
-            this.inner.pool.add_transaction(tx);
-            Ok((tx_hash, class_hash).into())
+            Ok((hash, class_hash).into())
         })
         .await
     }
@@ -62,14 +61,13 @@ impl<EF: ExecutorFactory> StarknetApi<EF> {
                 return Err(StarknetApiError::UnsupportedTransactionVersion);
             }
 
-            let tx = tx.into_tx_with_chain_id(this.inner.backend.chain_id);
+            let tx = tx.into_tx_with_chain_id(this.inner.backend.chain_spec.id);
             let contract_address = tx.contract_address();
 
             let tx = ExecutableTxWithHash::new(ExecutableTx::DeployAccount(tx));
-            let tx_hash = tx.hash;
+            let hash = this.inner.pool.add_transaction(tx)?;
 
-            this.inner.pool.add_transaction(tx);
-            Ok((tx_hash, contract_address).into())
+            Ok((hash, contract_address).into())
         })
         .await
     }

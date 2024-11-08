@@ -1,9 +1,11 @@
+use std::collections::HashMap;
 use std::str::FromStr;
 
 use anyhow::{anyhow, Context, Result};
 use clap::Args;
-use dojo_world::metadata::Environment;
-use scarb::core::Config;
+use dojo_utils::env::DOJO_ACCOUNT_ADDRESS_ENV_VAR;
+use dojo_world::config::Environment;
+use dojo_world::contracts::ContractInfo;
 use starknet::accounts::{ExecutionEncoding, SingleOwnerAccount};
 use starknet::core::types::{BlockId, BlockTag, Felt};
 use starknet::providers::Provider;
@@ -13,7 +15,6 @@ use url::Url;
 
 use super::signer::SignerOptions;
 use super::starknet::StarknetOptions;
-use super::DOJO_ACCOUNT_ADDRESS_ENV_VAR;
 
 #[cfg(feature = "controller")]
 pub mod controller;
@@ -22,15 +23,6 @@ mod r#type;
 #[cfg(feature = "controller")]
 use controller::ControllerSessionAccount;
 pub use r#type::*;
-
-/// Helper type for identifying how the world address will be provided.
-/// If it's a name, it will be used as the seed for computing the address.
-/// Else if it's an address, it will be used directly.
-#[derive(Debug)]
-pub enum WorldAddressOrName {
-    Address(Felt),
-    Name(String),
-}
 
 // INVARIANT:
 // - For commandline: we can either specify `private_key` or `keystore_path` along with
@@ -68,25 +60,33 @@ impl AccountOptions {
         &self,
         rpc_url: Url,
         provider: P,
-        world_address_or_name: WorldAddressOrName,
-        config: &Config,
+        contracts: &HashMap<String, ContractInfo>,
     ) -> Result<ControllerSessionAccount<P>>
     where
         P: Provider,
         P: Send + Sync,
     {
-        controller::create_controller(rpc_url, provider, world_address_or_name, config)
+        controller::create_controller(rpc_url, provider, contracts)
             .await
             .context("Failed to create a Controller account")
     }
 
+    /// Creates a [`SozoAccount`] from the given parameters.
+    ///
+    /// # Arguments
+    ///
+    /// * `provider` - Starknet provider.
+    /// * `env_metadata` - Environment pulled from configuration.
+    /// * `starknet` - Starknet options.
+    /// * `contracts` - The [`ContractInfo`] mappings. This one could have been gated behind the
+    ///   controller feature. However, to keep the feature internalized to account option, it's not.
+    ///   The caller could easily provide a default value though.
     pub async fn account<P>(
         &self,
         provider: P,
-        world_address_or_name: WorldAddressOrName,
-        starknet: &StarknetOptions,
         env_metadata: Option<&Environment>,
-        config: &Config,
+        starknet: &StarknetOptions,
+        contracts: &HashMap<String, ContractInfo>,
     ) -> Result<SozoAccount<P>>
     where
         P: Provider,
@@ -95,12 +95,12 @@ impl AccountOptions {
         #[cfg(feature = "controller")]
         if self.controller {
             let url = starknet.url(env_metadata)?;
-            let account = self.controller(url, provider, world_address_or_name, config).await?;
-            return Ok(SozoAccount::from(account));
+            let account = self.controller(url, provider, contracts).await?;
+            return Ok(SozoAccount::Controller(account));
         }
 
         let account = self.std_account(provider, env_metadata).await?;
-        Ok(SozoAccount::from(account))
+        Ok(SozoAccount::Standard(account))
     }
 
     pub async fn std_account<P>(
@@ -113,11 +113,10 @@ impl AccountOptions {
         P: Send + Sync,
     {
         let account_address = self.account_address(env_metadata)?;
-        trace!(?account_address, "Account address determined.");
 
         let signer = self.signer.signer(env_metadata, false)?;
-        trace!(?signer, "Signer obtained.");
 
+        trace!("Fetching chain id...");
         let chain_id = provider.chain_id().await?;
         trace!(?chain_id);
 
@@ -151,7 +150,9 @@ impl AccountOptions {
 #[cfg(test)]
 mod tests {
     use clap::Parser;
-    use starknet::accounts::{Call, ExecutionEncoder};
+    use katana_runner::RunnerCtx;
+    use starknet::accounts::ExecutionEncoder;
+    use starknet::core::types::Call;
     use starknet_crypto::Felt;
 
     use super::{AccountOptions, DOJO_ACCOUNT_ADDRESS_ENV_VAR};
@@ -178,7 +179,7 @@ mod tests {
 
     #[test]
     fn account_address_from_env_metadata() {
-        let env_metadata = dojo_world::metadata::Environment {
+        let env_metadata = dojo_world::config::Environment {
             account_address: Some("0x0".to_owned()),
             ..Default::default()
         };
@@ -192,7 +193,7 @@ mod tests {
 
     #[test]
     fn account_address_from_both() {
-        let env_metadata = dojo_world::metadata::Environment {
+        let env_metadata = dojo_world::config::Environment {
             account_address: Some("0x0".to_owned()),
             ..Default::default()
         };
@@ -210,8 +211,9 @@ mod tests {
         assert!(cmd.account.account_address(None).is_err());
     }
 
-    #[katana_runner::katana_test(2, true)]
-    async fn legacy_flag_works_as_expected() {
+    #[tokio::test]
+    #[katana_runner::test(accounts = 2, fee = false)]
+    async fn legacy_flag_works_as_expected(runner: &RunnerCtx) {
         let cmd = Command::parse_from([
             "sozo",
             "--legacy",
@@ -234,8 +236,9 @@ mod tests {
         assert!(*result.get(3).unwrap() == Felt::from_hex("0x0").unwrap());
     }
 
-    #[katana_runner::katana_test(2, true)]
-    async fn without_legacy_flag_works_as_expected() {
+    #[tokio::test]
+    #[katana_runner::test(accounts = 2, fee = false)]
+    async fn without_legacy_flag_works_as_expected(runner: &RunnerCtx) {
         let cmd = Command::parse_from(["sozo", "--account-address", "0x0", "--private-key", "0x1"]);
         let dummy_call = vec![Call {
             to: Felt::from_hex("0x0").unwrap(),

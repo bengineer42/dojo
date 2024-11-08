@@ -1,3 +1,6 @@
+// Re-export the blockifier crate.
+pub use blockifier;
+
 mod error;
 mod state;
 pub mod utils;
@@ -13,14 +16,14 @@ use katana_primitives::block::{ExecutableBlock, GasPrices as KatanaGasPrices, Pa
 use katana_primitives::env::{BlockEnv, CfgEnv};
 use katana_primitives::fee::TxFeeInfo;
 use katana_primitives::transaction::{ExecutableTx, ExecutableTxWithHash, TxWithHash};
-use katana_primitives::FieldElement;
+use katana_primitives::Felt;
 use katana_provider::traits::state::StateProvider;
 use tracing::info;
 
 use self::state::CachedState;
 use crate::{
-    BlockExecutor, EntryPointCall, ExecutionError, ExecutionOutput, ExecutionResult,
-    ExecutionStats, ExecutorExt, ExecutorFactory, ExecutorResult, ResultAndStates, SimulationFlag,
+    BlockExecutor, EntryPointCall, ExecutionError, ExecutionFlags, ExecutionOutput,
+    ExecutionResult, ExecutionStats, ExecutorExt, ExecutorFactory, ExecutorResult, ResultAndStates,
     StateProviderDb,
 };
 
@@ -29,12 +32,12 @@ pub(crate) const LOG_TARGET: &str = "katana::executor::blockifier";
 #[derive(Debug)]
 pub struct BlockifierFactory {
     cfg: CfgEnv,
-    flags: SimulationFlag,
+    flags: ExecutionFlags,
 }
 
 impl BlockifierFactory {
     /// Create a new factory with the given configuration and simulation flags.
-    pub fn new(cfg: CfgEnv, flags: SimulationFlag) -> Self {
+    pub fn new(cfg: CfgEnv, flags: ExecutionFlags) -> Self {
         Self { cfg, flags }
     }
 }
@@ -63,6 +66,11 @@ impl ExecutorFactory for BlockifierFactory {
     fn cfg(&self) -> &CfgEnv {
         &self.cfg
     }
+
+    /// Returns the execution flags set by the factory.
+    fn execution_flags(&self) -> &ExecutionFlags {
+        &self.flags
+    }
 }
 
 #[derive(Debug)]
@@ -70,7 +78,7 @@ pub struct StarknetVMProcessor<'a> {
     block_context: BlockContext,
     state: CachedState<StateProviderDb<'a>>,
     transactions: Vec<(TxWithHash, ExecutionResult)>,
-    simulation_flags: SimulationFlag,
+    simulation_flags: ExecutionFlags,
     stats: ExecutionStats,
 }
 
@@ -79,11 +87,11 @@ impl<'a> StarknetVMProcessor<'a> {
         state: Box<dyn StateProvider + 'a>,
         block_env: BlockEnv,
         cfg_env: CfgEnv,
-        simulation_flags: SimulationFlag,
+        simulation_flags: ExecutionFlags,
     ) -> Self {
         let transactions = Vec::new();
         let block_context = utils::block_context_from_envs(&block_env, &cfg_env);
-        let state = state::CachedState::new(StateProviderDb(state));
+        let state = state::CachedState::new(StateProviderDb::new(state));
         Self { block_context, state, transactions, simulation_flags, stats: Default::default() }
     }
 
@@ -94,9 +102,9 @@ impl<'a> StarknetVMProcessor<'a> {
         // TODO: should we enforce the gas price to not be 0,
         // as there's a flag to disable gas uasge instead?
         let eth_l1_gas_price =
-            NonZeroU128::new(header.gas_prices.eth).unwrap_or(NonZeroU128::new(1).unwrap());
+            NonZeroU128::new(header.l1_gas_prices.eth).unwrap_or(NonZeroU128::new(1).unwrap());
         let strk_l1_gas_price =
-            NonZeroU128::new(header.gas_prices.strk).unwrap_or(NonZeroU128::new(1).unwrap());
+            NonZeroU128::new(header.l1_gas_prices.strk).unwrap_or(NonZeroU128::new(1).unwrap());
 
         // TODO: which values is correct for those one?
         let eth_l1_data_gas_price = eth_l1_gas_price;
@@ -127,7 +135,7 @@ impl<'a> StarknetVMProcessor<'a> {
     fn simulate_with<F, T>(
         &self,
         transactions: Vec<ExecutableTxWithHash>,
-        flags: &SimulationFlag,
+        flags: &ExecutionFlags,
         mut op: F,
     ) -> Vec<T>
     where
@@ -173,6 +181,7 @@ impl<'a> BlockExecutor<'a> for StarknetVMProcessor<'a> {
             };
 
             let tx = TxWithHash::from(&exec_tx);
+            let hash = tx.hash;
             let res = utils::transact(&mut state.inner, block_context, flags, exec_tx);
 
             match &res {
@@ -182,7 +191,7 @@ impl<'a> BlockExecutor<'a> for StarknetVMProcessor<'a> {
                         receipt.resources_used().vm_resources.n_steps as u128;
 
                     if let Some(reason) = receipt.revert_reason() {
-                        info!(target: LOG_TARGET, %reason, "Transaction reverted.");
+                        info!(target: LOG_TARGET, hash = format!("{hash:#x}"), %reason, "Transaction reverted.");
                     }
 
                     if let Some((class_hash, compiled, sierra)) = class_decl_artifacts {
@@ -190,11 +199,10 @@ impl<'a> BlockExecutor<'a> for StarknetVMProcessor<'a> {
                     }
 
                     crate::utils::log_resources(&trace.actual_resources);
-                    crate::utils::log_events(receipt.events());
                 }
 
                 ExecutionResult::Failed { error } => {
-                    info!(target: LOG_TARGET, %error, "Executing transaction.");
+                    info!(target: LOG_TARGET, hash = format!("{hash:#x}"), %error, "Executing transaction.");
                 }
             };
 
@@ -231,6 +239,10 @@ impl<'a> BlockExecutor<'a> for StarknetVMProcessor<'a> {
                 eth: eth_l1_gas_price.into(),
                 strk: strk_l1_gas_price.into(),
             },
+            l1_data_gas_prices: KatanaGasPrices {
+                eth: self.block_context.block_info().gas_prices.eth_l1_data_gas_price.into(),
+                strk: self.block_context.block_info().gas_prices.strk_l1_data_gas_price.into(),
+            },
         }
     }
 }
@@ -239,7 +251,7 @@ impl ExecutorExt for StarknetVMProcessor<'_> {
     fn simulate(
         &self,
         transactions: Vec<ExecutableTxWithHash>,
-        flags: SimulationFlag,
+        flags: ExecutionFlags,
     ) -> Vec<ResultAndStates> {
         self.simulate_with(transactions, &flags, |_, (_, result)| ResultAndStates {
             result,
@@ -250,7 +262,7 @@ impl ExecutorExt for StarknetVMProcessor<'_> {
     fn estimate_fee(
         &self,
         transactions: Vec<ExecutableTxWithHash>,
-        flags: SimulationFlag,
+        flags: ExecutionFlags,
     ) -> Vec<Result<TxFeeInfo, ExecutionError>> {
         self.simulate_with(transactions, &flags, |_, (_, res)| match res {
             ExecutionResult::Success { receipt, .. } => {
@@ -270,7 +282,7 @@ impl ExecutorExt for StarknetVMProcessor<'_> {
         })
     }
 
-    fn call(&self, call: EntryPointCall) -> Result<Vec<FieldElement>, ExecutionError> {
+    fn call(&self, call: EntryPointCall) -> Result<Vec<Felt>, ExecutionError> {
         let block_context = &self.block_context;
         let mut state = self.state.0.lock();
         let state = MutRefState::new(&mut state.inner);

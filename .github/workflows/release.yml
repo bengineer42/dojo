@@ -9,7 +9,7 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
-  RUST_VERSION: 1.79.0
+  RUST_VERSION: 1.80.0
   REGISTRY_IMAGE: ghcr.io/${{ github.repository }}
 
 jobs:
@@ -42,7 +42,7 @@ jobs:
           # The target is used by Cargo
           # The arch is either 386, arm64 or amd64
           # The svm target platform to use for the binary https://github.com/roynalnaruto/svm-rs/blob/84cbe0ac705becabdc13168bae28a45ad2299749/svm-builds/build.rs#L4-L24
-          - os: ubuntu-latest-4-cores
+          - os: ubuntu-latest-8-cores
             platform: linux
             target: x86_64-unknown-linux-gnu
             arch: amd64
@@ -76,6 +76,12 @@ jobs:
       - uses: Swatinem/rust-cache@v1
         with:
           cache-on-failure: true
+
+      # required for `aws-lc-rs` crate to compile on Windows; https://aws.github.io/aws-lc-rs/requirements/windows.html
+      - name: Install NASM
+        uses: ilammy/setup-nasm@v1
+        with:
+          version: "2.15.05"
 
       - uses: arduino/setup-protoc@v2
         with:

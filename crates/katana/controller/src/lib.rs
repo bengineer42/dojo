@@ -1,24 +1,22 @@
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
-use account_sdk::abigen::controller::{Signer, SignerType};
-use account_sdk::signers::webauthn::{DeviceSigner, WebauthnAccountSigner};
-use account_sdk::signers::SignerTrait;
-use account_sdk::wasm_webauthn::CredentialID;
 use alloy_primitives::U256;
 use anyhow::Result;
+use async_trait::async_trait;
 use coset::CoseKey;
 use katana_primitives::contract::{ContractAddress, StorageKey, StorageValue};
 use katana_primitives::genesis::allocation::{GenesisAllocation, GenesisContractAlloc};
-use katana_primitives::genesis::constant::CONTROLLER_ACCOUNT_CONTRACT_CLASS_HASH;
+use katana_primitives::genesis::constant::CONTROLLER_CLASS_HASH;
 use katana_primitives::genesis::Genesis;
-use katana_primitives::FieldElement;
+use katana_primitives::Felt;
+use slot::account_sdk::signers::webauthn::{CredentialID, WebauthnBackend, WebauthnSigner};
+use slot::account_sdk::signers::{HashSigner, Signer, SignerTrait};
+use slot::account_sdk::OriginProvider;
 use slot::credential::Credentials;
 use starknet::core::utils::get_storage_var_address;
 use tracing::trace;
 
 mod webauthn;
-
-const LOG_TARGET: &str = "katana::controller";
 
 const WEBAUTHN_RP_ID: &str = "cartridge.gg";
 const WEBAUTHN_ORIGIN: &str = "https://x.cartridge.gg";
@@ -29,13 +27,16 @@ pub fn add_controller_account(genesis: &mut Genesis) -> Result<()> {
     add_controller_account_inner(genesis, credentials.account)
 }
 
-fn add_controller_account_inner(genesis: &mut Genesis, user: slot::account::Account) -> Result<()> {
-    let cred = user.credentials.webauthn.first().unwrap();
+fn add_controller_account_inner(
+    genesis: &mut Genesis,
+    user: slot::account::AccountInfo,
+) -> Result<()> {
+    let cred = user.credentials.first().unwrap();
+    let contract_address = user.controllers.first().unwrap().address;
 
     trace!(
-        target: LOG_TARGET,
         username = user.id,
-        address = format!("{:#x}", user.contract_address),
+        address = format!("{:#x}", contract_address),
         "Adding Cartridge Controller account to genesis."
     );
 
@@ -46,13 +47,11 @@ fn add_controller_account_inner(genesis: &mut Genesis, user: slot::account::Acco
         let account = GenesisContractAlloc {
             nonce: None,
             balance: Some(U256::from(0xfffffffffffffffu128)),
-            class_hash: Some(CONTROLLER_ACCOUNT_CONTRACT_CLASS_HASH),
-            storage: Some(get_contract_storage(credential_id, public_key, SignerType::Webauthn)?),
+            class_hash: Some(CONTROLLER_CLASS_HASH),
+            storage: Some(get_contract_storage(credential_id, public_key)?),
         };
 
-        let address = ContractAddress::from(FieldElement::from_bytes_be(
-            &user.contract_address.to_bytes_be(),
-        ));
+        let address = ContractAddress::from(contract_address);
 
         (address, GenesisAllocation::Contract(account))
     };
@@ -60,9 +59,8 @@ fn add_controller_account_inner(genesis: &mut Genesis, user: slot::account::Acco
     genesis.extend_allocations([(address, contract)]);
 
     trace!(
-        target: LOG_TARGET,
         username = user.id,
-        address = format!("{:#x}", user.contract_address),
+        address = format!("{:#x}", contract_address),
         "Cartridge Controller account added to genesis."
     );
 
@@ -79,7 +77,7 @@ pub mod json {
     use super::*;
 
     const CONTROLLER_SIERRA_ARTIFACT: &str =
-        include_str!("../../contracts/compiled/controller_CartridgeAccount.contract_class.json");
+        include_str!("../../contracts/build/controller_CartridgeAccount.contract_class.json");
     const CONTROLLER_CLASS_NAME: &str = "controller";
 
     // TODO(kariy): should accept the whole account struct instead of individual fields
@@ -87,7 +85,8 @@ pub mod json {
     pub fn add_controller_account_json(genesis: &mut GenesisJson) -> Result<()> {
         // bouncer that checks if there is an authenticated slot user
         let user = Credentials::load()?;
-        let cred = user.account.credentials.webauthn.first().unwrap();
+        let cred = user.account.credentials.first().unwrap();
+        let contract_address = user.account.controllers.first().unwrap().address;
 
         let credential_id = webauthn::credential::from_base64(&cred.id)?;
         let public_key = webauthn::cose_key::from_base64(&cred.public_key)?;
@@ -99,16 +98,10 @@ pub mod json {
                 nonce: None,
                 balance: None,
                 class: Some(ClassNameOrHash::Name(CONTROLLER_CLASS_NAME.to_string())),
-                storage: Some(get_contract_storage(
-                    credential_id,
-                    public_key,
-                    SignerType::Webauthn,
-                )?),
+                storage: Some(get_contract_storage(credential_id, public_key)?),
             };
 
-            let address = ContractAddress::from(FieldElement::from_bytes_be(
-                &user.account.contract_address.to_bytes_be(),
-            ));
+            let address = ContractAddress::from(contract_address);
 
             (address, account)
         };
@@ -134,39 +127,77 @@ pub mod json {
     }
 }
 
+/// Get the constructor contract storage for the Controller account
+///
+/// Reference: https://github.com/cartridge-gg/controller/blob/e76107998c33344d93304012fa6ff13f4003828a/packages/contracts/controller/src/account.cairo#L217
 fn get_contract_storage(
     credential_id: CredentialID,
     public_key: CoseKey,
-    signer_type: SignerType,
-) -> Result<HashMap<StorageKey, StorageValue>> {
-    let type_value: u16 = match signer_type {
-        SignerType::Starknet => 0,
-        SignerType::Secp256k1 => 1,
-        SignerType::Webauthn => 4,
-        SignerType::Unimplemented => 999,
+) -> Result<BTreeMap<StorageKey, StorageValue>> {
+    use slot::account_sdk::signers::DeviceError;
+    use webauthn_rs_proto::auth::PublicKeyCredentialRequestOptions;
+    use webauthn_rs_proto::{
+        PublicKeyCredential, PublicKeyCredentialCreationOptions, RegisterPublicKeyCredential,
     };
 
-    let signer = DeviceSigner::new(
-        WEBAUTHN_RP_ID.to_string(),
-        WEBAUTHN_ORIGIN.to_string(),
-        credential_id,
-        public_key,
-    );
+    // Our main priority here is to just compute the guid ( which is the call to `guid()` below )
+    //
+    // Technically we dont need to implement all of these and can just compute the guid directly
+    // ourselves, but this way its much simpler and easier to understand what is going on and also
+    // less prone to error ( assuming the underlying implementation is correct ).
 
-    let signer = Signer::Webauthn(signer.signer_pub_data());
-    let guid = signer.guid();
+    #[derive(Debug)]
+    struct SlotBackend;
 
-    // the storage variable name for webauthn signer
-    const NON_STARK_OWNER_VAR_NAME: &str = "_owner_non_stark";
-    let type_value = FieldElement::from(type_value);
-    let storage = get_storage_var_address(NON_STARK_OWNER_VAR_NAME, &[type_value])?;
+    impl OriginProvider for SlotBackend {
+        fn origin(&self) -> Result<String, DeviceError> {
+            Ok(WEBAUTHN_ORIGIN.to_string())
+        }
+    }
 
-    Ok(HashMap::from([(storage, guid)]))
+    // SAFETY:
+    //
+    // We don't be calling any of these functions throughout the process of computing the
+    // guid, so it's safe to just return an error here.
+
+    #[async_trait]
+    impl WebauthnBackend for SlotBackend {
+        async fn get_assertion(
+            &self,
+            options: PublicKeyCredentialRequestOptions,
+        ) -> Result<PublicKeyCredential, DeviceError> {
+            let _ = options;
+            Err(DeviceError::GetAssertion("Not implemented".to_string()))
+        }
+
+        async fn create_credential(
+            &self,
+            options: PublicKeyCredentialCreationOptions,
+        ) -> Result<RegisterPublicKeyCredential, DeviceError> {
+            let _ = options;
+            Err(DeviceError::CreateCredential("Not implemented".to_string()))
+        }
+    }
+
+    let webauthn_signer =
+        WebauthnSigner::new(WEBAUTHN_RP_ID.to_string(), credential_id, public_key, SlotBackend);
+    let guid = Signer::Webauthn(webauthn_signer).signer().guid();
+
+    // the storage variable name in the Controller contract for storing owners' credentials
+    const MULTIPLE_OWNERS_COMPONENT_SUB_STORAGE: &str = "owners";
+    let storage = get_storage_var_address(MULTIPLE_OWNERS_COMPONENT_SUB_STORAGE, &[guid])?;
+
+    // 1 for boolean True in Cairo. Refer to the provided link above.
+    let storage_mapping = BTreeMap::from([(storage, Felt::ONE)]);
+
+    Ok(storage_mapping)
 }
 
 #[cfg(test)]
 mod tests {
-    use slot::account::WebAuthnCredential;
+
+    use assert_matches::assert_matches;
+    use slot::account::{Controller, ControllerSigner, SignerType, WebAuthnCredential};
     use starknet::macros::felt;
 
     use super::*;
@@ -174,13 +205,15 @@ mod tests {
     // Test data for Controller with WebAuthn Signer.
     //
     // Username: johnsmith
-    // Controller address: 0x0260ab0352da372054ed9dc586f024f6a259b9ea64a8e09b16147201220f88d2
-    // <https://sepolia.starkscan.co/contract/0x0260ab0352da372054ed9dc586f024f6a259b9ea64a8e09b16147201220f88d2#overview>
+    // Controller address: 0x00397333e993ae162b476690e1401548ae97a8819955506b8bc918e067bdafc3
+    // <https://sepolia.starkscan.co/contract/0x00397333e993ae162b476690e1401548ae97a8819955506b8bc918e067bdafc3#contract-storage>
 
-    const STORAGE_KEY: FieldElement =
-        felt!("0x058c7ee1e9bb09b0d728314f36629772ef7a3c6773a823064d5a7e5651bcb890");
-    const STORAGE_VALUE: FieldElement =
-        felt!("0x5d7709b0a485e64a549ada9bd14d30419364127dfd351e01f38871c82500cd7");
+    const CONTROLLER_ADDRESS: Felt =
+        felt!("0x00397333e993ae162b476690e1401548ae97a8819955506b8bc918e067bdafc3");
+
+    const STORAGE_KEY: Felt =
+        felt!("0x023d8ecd0d641047a8d21e3cd8016377ed5c9cd9009539cd92b73adb8c023f10");
+    const STORAGE_VALUE: Felt = felt!("0x1");
 
     const WEBAUTHN_CREDENTIAL_ID: &str = "ja0NkHny-dlfPnClYECdmce0xTCuGT0xFjeuStaVqCI";
     const WEBAUTHN_PUBLIC_KEY: &str = "pQECAyYgASFYIBLHWNmpxCtO47cfOXw9nFCGftMq57xhvQC98aY_zQchIlggIgGHmWwQe1_FGi9GYqcYYpoPC9mkkf0f1rVD5UoGPEA";
@@ -189,26 +222,37 @@ mod tests {
     fn test_add_controller_account() {
         let mut genesis = Genesis::default();
 
-        let account = slot::account::Account {
+        let account = slot::account::AccountInfo {
             id: "johnsmith".to_string(),
             name: None,
-            contract_address: felt!("1337"),
-            credentials: slot::account::AccountCredentials {
-                webauthn: vec![WebAuthnCredential {
-                    id: WEBAUTHN_CREDENTIAL_ID.to_string(),
-                    public_key: WEBAUTHN_PUBLIC_KEY.to_string(),
+            controllers: vec![Controller {
+                id: "controller1".to_string(),
+                address: CONTROLLER_ADDRESS,
+                signers: vec![ControllerSigner {
+                    id: "signer1".to_string(),
+                    r#type: SignerType::WebAuthn,
                 }],
-            },
+            }],
+            credentials: vec![WebAuthnCredential {
+                id: WEBAUTHN_CREDENTIAL_ID.to_string(),
+                public_key: WEBAUTHN_PUBLIC_KEY.to_string(),
+            }],
         };
 
         add_controller_account_inner(&mut genesis, account.clone()).unwrap();
 
-        let address = ContractAddress::from(account.contract_address);
+        let address = ContractAddress::from(account.controllers[0].address);
         let allocation = genesis.allocations.get(&address).unwrap();
 
         assert!(genesis.allocations.contains_key(&address));
         assert_eq!(allocation.balance(), Some(U256::from(0xfffffffffffffffu128)));
-        assert_eq!(allocation.class_hash(), Some(CONTROLLER_ACCOUNT_CONTRACT_CLASS_HASH));
+        assert_eq!(allocation.class_hash(), Some(CONTROLLER_CLASS_HASH));
+
+        // Check the owner storage value
+        assert_matches!(allocation, GenesisAllocation::Contract(contract) => {
+            let storage = contract.storage.as_ref().unwrap();
+            assert_eq!(storage.get(&STORAGE_KEY), Some(&STORAGE_VALUE));
+        });
     }
 
     #[test]
@@ -216,9 +260,7 @@ mod tests {
         let credential_id = webauthn::credential::from_base64(WEBAUTHN_CREDENTIAL_ID).unwrap();
         let public_key = webauthn::cose_key::from_base64(WEBAUTHN_PUBLIC_KEY).unwrap();
 
-        let storage =
-            get_contract_storage(credential_id.clone(), public_key.clone(), SignerType::Webauthn)
-                .unwrap();
+        let storage = get_contract_storage(credential_id.clone(), public_key.clone()).unwrap();
 
         assert_eq!(storage.len(), 1);
         assert_eq!(storage.get(&STORAGE_KEY), Some(&STORAGE_VALUE));

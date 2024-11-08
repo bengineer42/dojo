@@ -10,12 +10,17 @@ version.workspace = true
 
 # Use from git instead of crates.io registry so that the workspace patches aren't applied.
 [dependencies]
-cairo-lang-casm = "2.7.0-rc.1"
-cairo-lang-runner = "2.7.0-rc.1"
-cairo-lang-sierra = "2.7.0-rc.1"
-cairo-lang-sierra-to-casm = "2.7.0-rc.1"
-cairo-lang-starknet = "2.7.0-rc.1"
-cairo-lang-starknet-classes = "2.7.0-rc.1"
-cairo-lang-utils = "2.7.0-rc.1"
-cairo-vm = "1.0.0-rc3"
-starknet_api = "0.13.0-dev.9"
+cairo-lang-casm = "2.7.0"
+cairo-lang-runner = "2.7.0"
+cairo-lang-sierra = "2.7.0"
+cairo-lang-sierra-to-casm = "2.7.0"
+cairo-lang-starknet = "2.7.0"
+cairo-lang-starknet-classes = "2.7.0"
+cairo-lang-utils = "2.7.0"
+cairo-vm = "1.0.1"
+starknet_api = { git = "https://github.com/dojoengine/sequencer", tag = "v0.8.0-rc3.2" }
+
+[features]
+# Some types that we used from cairo-vm implements the `Arbitrary` trait,
+# only under the `test_utils` feature. So we expose through this feature.
+cairo-vm-test-utils = [ "cairo-vm/test_utils" ]

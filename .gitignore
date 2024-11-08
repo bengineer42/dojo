@@ -18,3 +18,9 @@ crates/benches/bench_results.txt
 .vscode
 bindings
 justfile
+spawn-and-move-db
+types-test-db
+examples/spawn-and-move/manifests/saya/**
+**/*.log
+
+artifacts/

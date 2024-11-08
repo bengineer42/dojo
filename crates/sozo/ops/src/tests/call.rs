@@ -1,30 +1,30 @@
 use dojo_world::contracts::WorldContractReader;
-use katana_runner::KatanaRunner;
+use katana_runner::RunnerCtx;
+use scarb_ui::Ui;
 use starknet::accounts::SingleOwnerAccount;
 use starknet::core::types::Felt;
 use starknet::providers::jsonrpc::HttpTransport;
 use starknet::providers::JsonRpcClient;
 use starknet::signers::LocalWallet;
 
-use super::setup;
+use crate::test_utils::setup;
 use crate::{call, utils};
 
 const CONTRACT_TAG: &str = "dojo_examples-actions";
 const ENTRYPOINT: &str = "get_player_position";
 
-// TODO: we should work on a lazy static init for the runner for all the call tests,
-// as the state will not change, we only read and check the result.
-
 #[tokio::test]
-async fn call_with_bad_address() {
-    let sequencer = KatanaRunner::new().expect("Failed to start runner.");
-
-    let world = setup::setup(&sequencer).await.unwrap();
+#[katana_runner::test(db_dir = "/tmp/spawn-and-move-db")]
+async fn call_with_bad_address(sequencer: &RunnerCtx) {
+    let world = setup::setup_with_world(sequencer).await.unwrap();
     let provider = sequencer.provider();
     let world_reader = WorldContractReader::new(world.address, provider);
 
+    let ui = Ui::new(scarb_ui::Verbosity::Verbose, scarb_ui::OutputFormat::Text);
+
     assert!(
         call::call(
+            &ui,
             world_reader,
             "0xBadCoffeeBadCode".to_string(),
             ENTRYPOINT.to_string(),
@@ -37,15 +37,17 @@ async fn call_with_bad_address() {
 }
 
 #[tokio::test]
-async fn call_with_bad_name() {
-    let sequencer = KatanaRunner::new().expect("Failed to start runner.");
-
-    let world = setup::setup(&sequencer).await.unwrap();
+#[katana_runner::test(db_dir = "/tmp/spawn-and-move-db")]
+async fn call_with_bad_name(sequencer: &RunnerCtx) {
+    let world = setup::setup_with_world(sequencer).await.unwrap();
     let provider = sequencer.provider();
     let world_reader = WorldContractReader::new(world.address, provider);
 
+    let ui = Ui::new(scarb_ui::Verbosity::Verbose, scarb_ui::OutputFormat::Text);
+
     assert!(
         call::call(
+            &ui,
             world_reader,
             "BadName".to_string(),
             ENTRYPOINT.to_string(),
@@ -58,15 +60,17 @@ async fn call_with_bad_name() {
 }
 
 #[tokio::test]
-async fn call_with_bad_entrypoint() {
-    let sequencer = KatanaRunner::new().expect("Failed to start runner.");
-
-    let world = setup::setup(&sequencer).await.unwrap();
+#[katana_runner::test(db_dir = "/tmp/spawn-and-move-db")]
+async fn call_with_bad_entrypoint(sequencer: &RunnerCtx) {
+    let world = setup::setup_with_world(sequencer).await.unwrap();
     let provider = sequencer.provider();
     let world_reader = WorldContractReader::new(world.address, provider);
 
+    let ui = Ui::new(scarb_ui::Verbosity::Verbose, scarb_ui::OutputFormat::Text);
+
     assert!(
         call::call(
+            &ui,
             world_reader,
             CONTRACT_TAG.to_string(),
             "BadEntryPoint".to_string(),
@@ -79,15 +83,17 @@ async fn call_with_bad_entrypoint() {
 }
 
 #[tokio::test]
-async fn call_with_bad_calldata() {
-    let sequencer = KatanaRunner::new().expect("Failed to start runner.");
-
-    let world = setup::setup(&sequencer).await.unwrap();
+#[katana_runner::test(db_dir = "/tmp/spawn-and-move-db")]
+async fn call_with_bad_calldata(sequencer: &RunnerCtx) {
+    let world = setup::setup_with_world(sequencer).await.unwrap();
     let provider = sequencer.provider();
     let world_reader = WorldContractReader::new(world.address, provider);
 
+    let ui = Ui::new(scarb_ui::Verbosity::Verbose, scarb_ui::OutputFormat::Text);
+
     assert!(
         call::call(
+            &ui,
             world_reader,
             CONTRACT_TAG.to_string(),
             ENTRYPOINT.to_string(),
@@ -100,36 +106,45 @@ async fn call_with_bad_calldata() {
 }
 
 #[tokio::test]
-async fn call_with_contract_name() {
-    let sequencer = KatanaRunner::new().expect("Failed to start runner.");
-
-    let world = setup::setup(&sequencer).await.unwrap();
+#[katana_runner::test(db_dir = "/tmp/spawn-and-move-db")]
+async fn call_with_contract_name(sequencer: &RunnerCtx) {
+    let world = setup::setup_with_world(sequencer).await.unwrap();
     let provider = sequencer.provider();
     let world_reader = WorldContractReader::new(world.address, provider);
 
-    let r =
-        call::call(world_reader, CONTRACT_TAG.to_string(), ENTRYPOINT.to_string(), vec![], None)
-            .await;
+    let ui = Ui::new(scarb_ui::Verbosity::Verbose, scarb_ui::OutputFormat::Text);
+
+    let r = call::call(
+        &ui,
+        world_reader,
+        CONTRACT_TAG.to_string(),
+        ENTRYPOINT.to_string(),
+        vec![],
+        None,
+    )
+    .await;
 
     assert!(r.is_ok());
 }
 
 #[tokio::test]
-async fn call_with_contract_address() {
-    let sequencer = KatanaRunner::new().expect("Failed to start runner.");
+#[katana_runner::test(db_dir = "/tmp/spawn-and-move-db")]
+async fn call_with_contract_address(sequencer: &RunnerCtx) {
+    let ui = Ui::new(scarb_ui::Verbosity::Verbose, scarb_ui::OutputFormat::Text);
 
-    let world = setup::setup(&sequencer).await.unwrap();
+    let world = setup::setup_with_world(sequencer).await.unwrap();
     let provider = sequencer.provider();
     let world_reader = WorldContractReader::new(world.address, provider);
 
     let contract_address = utils::get_contract_address::<
         SingleOwnerAccount<JsonRpcClient<HttpTransport>, LocalWallet>,
-    >(&world, CONTRACT_TAG.to_string())
+    >(&world, CONTRACT_TAG)
     .await
     .unwrap();
 
     assert!(
         call::call(
+            &ui,
             world_reader,
             format!("{:#x}", contract_address),
             ENTRYPOINT.to_string(),

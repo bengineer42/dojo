@@ -1,11 +1,13 @@
 pub mod state;
+pub mod trie;
 
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 use std::fmt::Debug;
 use std::ops::{Range, RangeInclusive};
 
 use katana_db::abstraction::{Database, DbCursor, DbCursorMut, DbDupSortCursor, DbTx, DbTxMut};
 use katana_db::error::DatabaseError;
+use katana_db::init_ephemeral_db;
 use katana_db::mdbx::DbEnv;
 use katana_db::models::block::StoredBlockBodyIndices;
 use katana_db::models::contract::{
@@ -28,7 +30,7 @@ use katana_primitives::receipt::Receipt;
 use katana_primitives::state::{StateUpdates, StateUpdatesWithDeclaredClasses};
 use katana_primitives::trace::TxExecInfo;
 use katana_primitives::transaction::{TxHash, TxNumber, TxWithHash};
-use katana_primitives::FieldElement;
+use katana_primitives::Felt;
 
 use crate::error::ProviderError;
 use crate::traits::block::{
@@ -52,6 +54,14 @@ pub struct DbProvider<Db: Database = DbEnv>(Db);
 impl<Db: Database> DbProvider<Db> {
     /// Creates a new [`DbProvider`] from the given [`DbEnv`].
     pub fn new(db: Db) -> Self {
+        Self(db)
+    }
+}
+
+impl DbProvider<DbEnv> {
+    /// Creates a new [`DbProvider`] using an ephemeral database.
+    pub fn new_ephemeral() -> Self {
+        let db = init_ephemeral_db().expect("Failed to initialize ephemeral database");
         Self(db)
     }
 }
@@ -245,7 +255,7 @@ impl<Db: Database> BlockStatusProvider for DbProvider<Db> {
 }
 
 impl<Db: Database> StateRootProvider for DbProvider<Db> {
-    fn state_root(&self, block_id: BlockHashOrNumber) -> ProviderResult<Option<FieldElement>> {
+    fn state_root(&self, block_id: BlockHashOrNumber) -> ProviderResult<Option<Felt>> {
         let db_tx = self.0.tx()?;
 
         let block_num = match block_id {
@@ -292,17 +302,17 @@ impl<Db: Database> StateUpdateProvider for DbProvider<Db> {
             let nonce_updates = dup_entries::<
                 Db,
                 tables::NonceChangeHistory,
-                HashMap<ContractAddress, Nonce>,
+                BTreeMap<ContractAddress, Nonce>,
                 _,
             >(&db_tx, block_num, |entry| {
                 let (_, ContractNonceChange { contract_address, nonce }) = entry?;
                 Ok((contract_address, nonce))
             })?;
 
-            let contract_updates = dup_entries::<
+            let deployed_contracts = dup_entries::<
                 Db,
                 tables::ClassChangeHistory,
-                HashMap<ContractAddress, ClassHash>,
+                BTreeMap<ContractAddress, ClassHash>,
                 _,
             >(&db_tx, block_num, |entry| {
                 let (_, ContractClassChange { contract_address, class_hash }) = entry?;
@@ -312,7 +322,7 @@ impl<Db: Database> StateUpdateProvider for DbProvider<Db> {
             let declared_classes = dup_entries::<
                 Db,
                 tables::ClassDeclarations,
-                HashMap<ClassHash, CompiledClassHash>,
+                BTreeMap<ClassHash, CompiledClassHash>,
                 _,
             >(&db_tx, block_num, |entry| {
                 let (_, class_hash) = entry?;
@@ -335,7 +345,7 @@ impl<Db: Database> StateUpdateProvider for DbProvider<Db> {
                     Ok((key.contract_address, (key.key, value)))
                 })?;
 
-                let mut map: HashMap<_, HashMap<StorageKey, StorageValue>> = HashMap::new();
+                let mut map: BTreeMap<_, BTreeMap<StorageKey, StorageValue>> = BTreeMap::new();
 
                 entries.into_iter().for_each(|(addr, (key, value))| {
                     map.entry(addr).or_default().insert(key, value);
@@ -348,8 +358,9 @@ impl<Db: Database> StateUpdateProvider for DbProvider<Db> {
             Ok(Some(StateUpdates {
                 nonce_updates,
                 storage_updates,
-                contract_updates,
+                deployed_contracts,
                 declared_classes,
+                ..Default::default()
             }))
         } else {
             Ok(None)
@@ -589,7 +600,8 @@ impl<Db: Database> BlockEnvProvider for DbProvider<Db> {
         Ok(Some(BlockEnv {
             number: header.number,
             timestamp: header.timestamp,
-            l1_gas_prices: header.gas_prices,
+            l1_gas_prices: header.l1_gas_prices,
+            l1_data_gas_prices: header.l1_data_gas_prices,
             sequencer_address: header.sequencer_address,
         }))
     }
@@ -604,10 +616,10 @@ impl<Db: Database> BlockWriter for DbProvider<Db> {
         executions: Vec<TxExecInfo>,
     ) -> ProviderResult<()> {
         self.0.update(move |db_tx| -> ProviderResult<()> {
-            let block_hash = block.block.header.hash;
-            let block_number = block.block.header.header.number;
+            let block_hash = block.block.hash;
+            let block_number = block.block.header.number;
 
-            let block_header = block.block.header.header;
+            let block_header = block.block.header;
             let transactions = block.block.body;
 
             let tx_count = transactions.len() as u64;
@@ -706,7 +718,7 @@ impl<Db: Database> BlockWriter for DbProvider<Db> {
 
             // update contract info
 
-            for (addr, class_hash) in states.state_updates.contract_updates {
+            for (addr, class_hash) in states.state_updates.deployed_contracts {
                 let value = if let Some(info) = db_tx.get::<tables::ContractInfo>(addr)? {
                     GenericContractInfo { class_hash, ..info }
                 } else {
@@ -765,19 +777,18 @@ impl<Db: Database> BlockWriter for DbProvider<Db> {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashMap;
+    use std::collections::BTreeMap;
 
-    use katana_db::mdbx::DbEnvKind;
+    use katana_primitives::address;
     use katana_primitives::block::{
         Block, BlockHashOrNumber, FinalityStatus, Header, SealedBlockWithStatus,
     };
     use katana_primitives::contract::ContractAddress;
-    use katana_primitives::fee::TxFeeInfo;
+    use katana_primitives::fee::{PriceUnit, TxFeeInfo};
     use katana_primitives::receipt::{InvokeTxReceipt, Receipt};
     use katana_primitives::state::{StateUpdates, StateUpdatesWithDeclaredClasses};
     use katana_primitives::trace::TxExecInfo;
     use katana_primitives::transaction::{InvokeTx, Tx, TxHash, TxWithHash};
-    use starknet::core::types::PriceUnit;
     use starknet::macros::felt;
 
     use super::DbProvider;
@@ -803,22 +814,23 @@ mod tests {
     fn create_dummy_state_updates() -> StateUpdatesWithDeclaredClasses {
         StateUpdatesWithDeclaredClasses {
             state_updates: StateUpdates {
-                nonce_updates: HashMap::from([
-                    (ContractAddress::from(felt!("1")), felt!("1")),
-                    (ContractAddress::from(felt!("2")), felt!("2")),
+                nonce_updates: BTreeMap::from([
+                    (address!("1"), felt!("1")),
+                    (address!("2"), felt!("2")),
                 ]),
-                contract_updates: HashMap::from([
-                    (ContractAddress::from(felt!("1")), felt!("3")),
-                    (ContractAddress::from(felt!("2")), felt!("4")),
+                deployed_contracts: BTreeMap::from([
+                    (address!("1"), felt!("3")),
+                    (address!("2"), felt!("4")),
                 ]),
-                declared_classes: HashMap::from([
+                declared_classes: BTreeMap::from([
                     (felt!("3"), felt!("89")),
                     (felt!("4"), felt!("90")),
                 ]),
-                storage_updates: HashMap::from([(
-                    ContractAddress::from(felt!("1")),
-                    HashMap::from([(felt!("1"), felt!("1")), (felt!("2"), felt!("2"))]),
+                storage_updates: BTreeMap::from([(
+                    address!("1"),
+                    BTreeMap::from([(felt!("1"), felt!("1")), (felt!("2"), felt!("2"))]),
                 )]),
+                ..Default::default()
             },
             ..Default::default()
         }
@@ -827,17 +839,17 @@ mod tests {
     fn create_dummy_state_updates_2() -> StateUpdatesWithDeclaredClasses {
         StateUpdatesWithDeclaredClasses {
             state_updates: StateUpdates {
-                nonce_updates: HashMap::from([
-                    (ContractAddress::from(felt!("1")), felt!("5")),
-                    (ContractAddress::from(felt!("2")), felt!("6")),
+                nonce_updates: BTreeMap::from([
+                    (address!("1"), felt!("5")),
+                    (address!("2"), felt!("6")),
                 ]),
-                contract_updates: HashMap::from([
-                    (ContractAddress::from(felt!("1")), felt!("77")),
-                    (ContractAddress::from(felt!("2")), felt!("66")),
+                deployed_contracts: BTreeMap::from([
+                    (address!("1"), felt!("77")),
+                    (address!("2"), felt!("66")),
                 ]),
-                storage_updates: HashMap::from([(
-                    ContractAddress::from(felt!("1")),
-                    HashMap::from([(felt!("1"), felt!("100")), (felt!("2"), felt!("200"))]),
+                storage_updates: BTreeMap::from([(
+                    address!("1"),
+                    BTreeMap::from([(felt!("1"), felt!("100")), (felt!("2"), felt!("200"))]),
                 )]),
                 ..Default::default()
             },
@@ -846,13 +858,12 @@ mod tests {
     }
 
     fn create_db_provider() -> DbProvider {
-        DbProvider(katana_db::mdbx::test_utils::create_test_db(DbEnvKind::RW))
+        DbProvider(katana_db::mdbx::test_utils::create_test_db())
     }
 
     #[test]
     fn insert_block() {
         let provider = create_db_provider();
-
         let block = create_dummy_block();
         let state_updates = create_dummy_state_updates();
 
@@ -879,7 +890,7 @@ mod tests {
 
         // get values
 
-        let block_id: BlockHashOrNumber = block.block.header.hash.into();
+        let block_id: BlockHashOrNumber = block.block.hash.into();
 
         let latest_number = provider.latest_number().unwrap();
         let latest_hash = provider.latest_hash().unwrap();
@@ -894,8 +905,8 @@ mod tests {
 
         let state_prov = StateFactoryProvider::latest(&provider).unwrap();
 
-        let nonce1 = state_prov.nonce(ContractAddress::from(felt!("1"))).unwrap().unwrap();
-        let nonce2 = state_prov.nonce(ContractAddress::from(felt!("2"))).unwrap().unwrap();
+        let nonce1 = state_prov.nonce(address!("1")).unwrap().unwrap();
+        let nonce2 = state_prov.nonce(address!("2")).unwrap().unwrap();
 
         let class_hash1 = state_prov.class_hash_of_contract(felt!("1").into()).unwrap().unwrap();
         let class_hash2 = state_prov.class_hash_of_contract(felt!("2").into()).unwrap().unwrap();
@@ -905,10 +916,8 @@ mod tests {
         let compiled_hash2 =
             state_prov.compiled_class_hash_of_class_hash(class_hash2).unwrap().unwrap();
 
-        let storage1 =
-            state_prov.storage(ContractAddress::from(felt!("1")), felt!("1")).unwrap().unwrap();
-        let storage2 =
-            state_prov.storage(ContractAddress::from(felt!("1")), felt!("2")).unwrap().unwrap();
+        let storage1 = state_prov.storage(address!("1"), felt!("1")).unwrap().unwrap();
+        let storage2 = state_prov.storage(address!("1"), felt!("2")).unwrap().unwrap();
 
         // assert values are populated correctly
 
@@ -920,9 +929,9 @@ mod tests {
         assert_eq!(body_indices.tx_count, tx_count);
 
         assert_eq!(block_status, FinalityStatus::AcceptedOnL2);
-        assert_eq!(block.block.header.hash, latest_hash);
+        assert_eq!(block.block.hash, latest_hash);
         assert_eq!(block.block.body.len() as u64, tx_count);
-        assert_eq!(block.block.header.header.number, latest_number);
+        assert_eq!(block.block.header.number, latest_number);
         assert_eq!(block.block.unseal(), actual_block);
 
         assert_eq!(nonce1, felt!("1"));
@@ -991,16 +1000,14 @@ mod tests {
 
         let state_prov = StateFactoryProvider::latest(&provider).unwrap();
 
-        let nonce1 = state_prov.nonce(ContractAddress::from(felt!("1"))).unwrap().unwrap();
-        let nonce2 = state_prov.nonce(ContractAddress::from(felt!("2"))).unwrap().unwrap();
+        let nonce1 = state_prov.nonce(address!("1")).unwrap().unwrap();
+        let nonce2 = state_prov.nonce(address!("2")).unwrap().unwrap();
 
         let class_hash1 = state_prov.class_hash_of_contract(felt!("1").into()).unwrap().unwrap();
         let class_hash2 = state_prov.class_hash_of_contract(felt!("2").into()).unwrap().unwrap();
 
-        let storage1 =
-            state_prov.storage(ContractAddress::from(felt!("1")), felt!("1")).unwrap().unwrap();
-        let storage2 =
-            state_prov.storage(ContractAddress::from(felt!("1")), felt!("2")).unwrap().unwrap();
+        let storage1 = state_prov.storage(address!("1"), felt!("1")).unwrap().unwrap();
+        let storage2 = state_prov.storage(address!("1"), felt!("2")).unwrap().unwrap();
 
         assert_eq!(nonce1, felt!("5"));
         assert_eq!(nonce2, felt!("6"));

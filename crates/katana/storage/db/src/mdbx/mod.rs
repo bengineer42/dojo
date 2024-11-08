@@ -7,10 +7,14 @@ pub mod stats;
 pub mod tx;
 
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
+use dojo_metrics::metrics::gauge;
 pub use libmdbx;
 use libmdbx::{DatabaseFlags, EnvironmentFlags, Geometry, Mode, PageSize, SyncMode, RO, RW};
+use metrics::{describe_gauge, Label};
+use tracing::error;
 
 use self::stats::{Stats, TableStat};
 use self::tx::Tx;
@@ -35,8 +39,21 @@ pub enum DbEnvKind {
 }
 
 /// Wrapper for `libmdbx-sys` environment.
+#[derive(Debug, Clone)]
+pub struct DbEnv {
+    inner: Arc<DbEnvInner>,
+}
+
 #[derive(Debug)]
-pub struct DbEnv(libmdbx::Environment);
+struct DbEnvInner {
+    /// The handle to the MDBX environment.
+    env: libmdbx::Environment,
+    /// The path where the database environemnt is stored at.
+    dir: PathBuf,
+    /// A flag inidicating whether the database is ephemeral or not. If `true`, the database will
+    /// be deleted when the environment is dropped.
+    ephemeral: bool,
+}
 
 impl DbEnv {
     /// Opens the database at the specified path with the given `EnvKind`.
@@ -70,12 +87,48 @@ impl DbEnv {
             })
             .set_max_readers(DEFAULT_MAX_READERS);
 
-        Ok(DbEnv(builder.open(path.as_ref()).map_err(DatabaseError::OpenEnv)?))
+        let env = builder.open(path.as_ref()).map_err(DatabaseError::OpenEnv)?;
+        let dir = path.as_ref().to_path_buf();
+        let inner = DbEnvInner { env, dir, ephemeral: false };
+
+        Ok(Self { inner: Arc::new(inner) }.with_metrics())
+    }
+
+    /// Opens an ephemeral database. Temporary database environment whose underlying directory will
+    /// be deleted when the returned [`DbEnv`] is dropped.
+    pub fn open_ephemeral() -> Result<Self, DatabaseError> {
+        let dir =
+            tempfile::Builder::new().keep(true).tempdir().expect("failed to create a temp dir");
+        let path = dir.path();
+
+        let mut builder = libmdbx::Environment::builder();
+        builder
+            .set_max_dbs(Tables::ALL.len())
+            .set_geometry(Geometry {
+                size: Some(0..(GIGABYTE * 10)),             // 10gb
+                growth_step: Some((GIGABYTE / 2) as isize), // 512mb
+                shrink_threshold: None,
+                page_size: Some(PageSize::Set(utils::default_page_size())),
+            })
+            .set_flags(EnvironmentFlags {
+                // we dont care about durability  here
+                mode: Mode::ReadWrite { sync_mode: SyncMode::UtterlyNoSync },
+                no_rdahead: true,
+                coalesce: true,
+                ..Default::default()
+            })
+            .set_max_readers(DEFAULT_MAX_READERS);
+
+        let env = builder.open(path).map_err(DatabaseError::OpenEnv)?;
+        let dir = path.to_path_buf();
+        let inner = DbEnvInner { env, dir, ephemeral: true };
+
+        Ok(Self { inner: Arc::new(inner) }.with_metrics())
     }
 
     /// Creates all the defined tables in [`Tables`], if necessary.
     pub fn create_tables(&self) -> Result<(), DatabaseError> {
-        let tx = self.0.begin_rw_txn().map_err(DatabaseError::CreateRWTx)?;
+        let tx = self.inner.env.begin_rw_txn().map_err(DatabaseError::CreateRWTx)?;
 
         for table in Tables::ALL {
             let flags = match table.table_type() {
@@ -90,6 +143,19 @@ impl DbEnv {
 
         Ok(())
     }
+
+    /// Returns the path to the database environment directory.
+    pub fn path(&self) -> &Path {
+        &self.inner.dir
+    }
+
+    fn with_metrics(self) -> Self {
+        describe_gauge!("db.table_size", metrics::Unit::Bytes, "Total size of the table");
+        describe_gauge!("db.table_pages", metrics::Unit::Count, "Number of pages in the table");
+        describe_gauge!("db.table_entries", metrics::Unit::Count, "Number of entries in the table");
+        describe_gauge!("db.freelist", metrics::Unit::Bytes, "Size of the database freelist");
+        self
+    }
 }
 
 impl Database for DbEnv {
@@ -98,11 +164,11 @@ impl Database for DbEnv {
     type Stats = stats::Stats;
 
     fn tx(&self) -> Result<Self::Tx, DatabaseError> {
-        Ok(Tx::new(self.0.begin_ro_txn().map_err(DatabaseError::CreateROTx)?))
+        Ok(Tx::new(self.inner.env.begin_ro_txn().map_err(DatabaseError::CreateROTx)?))
     }
 
     fn tx_mut(&self) -> Result<Self::TxMut, DatabaseError> {
-        Ok(Tx::new(self.0.begin_rw_txn().map_err(DatabaseError::CreateRWTx)?))
+        Ok(Tx::new(self.inner.env.begin_rw_txn().map_err(DatabaseError::CreateRWTx)?))
     }
 
     fn stats(&self) -> Result<Self::Stats, DatabaseError> {
@@ -115,33 +181,85 @@ impl Database for DbEnv {
                 table_stats.insert(table.name(), TableStat::new(stat));
             }
 
-            let info = self.0.info().map_err(DatabaseError::Stat)?;
-            Ok(Stats::new(table_stats, info))
+            let info = self.inner.env.info().map_err(DatabaseError::Stat)?;
+            let freelist = self.inner.env.freelist().map_err(DatabaseError::Stat)?;
+            Ok(Stats { table_stats, info, freelist })
         })?
+    }
+}
+
+impl dojo_metrics::Report for DbEnv {
+    fn report(&self) {
+        match self.stats() {
+            Ok(stats) => {
+                let mut pgsize = 0;
+
+                for (table, stat) in stats.table_stats() {
+                    gauge!("db.table_size", vec![Label::new("table", *table)])
+                        .set(stat.total_size() as f64);
+
+                    gauge!(
+                        "db.table_pages",
+                        vec![Label::new("table", *table), Label::new("type", "leaf")]
+                    )
+                    .set(stat.leaf_pages() as f64);
+
+                    gauge!(
+                        "db.table_pages",
+                        vec![Label::new("table", *table), Label::new("type", "branch")]
+                    )
+                    .set(stat.branch_pages() as f64);
+
+                    gauge!(
+                        "db.table_pages",
+                        vec![Label::new("table", *table), Label::new("type", "overflow")]
+                    )
+                    .set(stat.overflow_pages() as f64);
+
+                    gauge!("db.table_entries", vec![Label::new("table", *table)])
+                        .set(stat.entries() as f64);
+
+                    if pgsize == 0 {
+                        pgsize = stat.page_size() as usize;
+                    }
+                }
+
+                gauge!("db.freelist").set((stats.freelist() * pgsize) as f64);
+            }
+
+            Err(error) => {
+                error!(%error, "Failed to read database stats.");
+            }
+        }
     }
 }
 
 #[cfg(any(test, feature = "test-utils"))]
 pub mod test_utils {
-    use std::path::Path;
 
-    use super::{DbEnv, DbEnvKind};
+    use super::DbEnv;
+    use crate::init_ephemeral_db;
 
     const ERROR_DB_CREATION: &str = "Not able to create the mdbx file.";
 
-    /// Create database for testing
-    pub fn create_test_db(kind: DbEnvKind) -> DbEnv {
-        create_test_db_with_path(
-            kind,
-            &tempfile::TempDir::new().expect("Failed to create temp dir.").into_path(),
-        )
+    /// Create ephemeral database for testing
+    pub fn create_test_db() -> DbEnv {
+        init_ephemeral_db().expect(ERROR_DB_CREATION)
     }
+}
 
-    /// Create database for testing with specified path
-    pub fn create_test_db_with_path(kind: DbEnvKind, path: &Path) -> DbEnv {
-        let env = DbEnv::open(path, kind).expect(ERROR_DB_CREATION);
-        env.create_tables().expect("Failed to create tables.");
-        env
+impl Drop for DbEnv {
+    fn drop(&mut self) {
+        // Try to get a mutable reference, this will return Some if there's only a single reference
+        // left.
+        if let Some(inner) = Arc::get_mut(&mut self.inner) {
+            // And if it is ephemeral, remove the directory.
+            if inner.ephemeral {
+                if let Err(e) = std::fs::remove_dir_all(&inner.dir) {
+                    eprintln!("Failed to remove temporary directory: {e}");
+                }
+            }
+        }
     }
 }
 
@@ -150,7 +268,7 @@ mod tests {
 
     use katana_primitives::block::Header;
     use katana_primitives::contract::{ContractAddress, GenericContractInfo};
-    use katana_primitives::FieldElement;
+    use katana_primitives::{address, Felt};
     use starknet::macros::felt;
 
     use super::*;
@@ -172,12 +290,12 @@ mod tests {
 
     #[test]
     fn db_creation() {
-        create_test_db(DbEnvKind::RW);
+        create_test_db();
     }
 
     #[test]
     fn db_stats() {
-        let env = create_test_db(DbEnvKind::RW);
+        let env = create_test_db();
 
         // Insert some data to ensure non-zero stats
         let tx = env.tx_mut().expect(ERROR_INIT_TX);
@@ -209,7 +327,7 @@ mod tests {
 
     #[test]
     fn db_manual_put_get() {
-        let env = create_test_db(DbEnvKind::RW);
+        let env = create_test_db();
 
         let value = Header::default();
         let key = 1u64;
@@ -231,7 +349,7 @@ mod tests {
 
     #[test]
     fn db_delete() {
-        let env = create_test_db(DbEnvKind::RW);
+        let env = create_test_db();
 
         let value = Header::default();
         let key = 1u64;
@@ -255,7 +373,7 @@ mod tests {
 
     #[test]
     fn db_manual_cursor_walk() {
-        let env = create_test_db(DbEnvKind::RW);
+        let env = create_test_db();
 
         let key1 = 1u64;
         let key2 = 2u64;
@@ -286,11 +404,11 @@ mod tests {
 
     #[test]
     fn db_cursor_upsert() {
-        let db = create_test_db(DbEnvKind::RW);
+        let db = create_test_db();
         let tx = db.tx_mut().expect(ERROR_INIT_TX);
 
         let mut cursor = tx.cursor::<ContractInfo>().unwrap();
-        let key: ContractAddress = felt!("0x1337").into();
+        let key = address!("0x1337");
 
         let account = GenericContractInfo::default();
         cursor.upsert(key, account).expect(ERROR_UPSERT);
@@ -307,12 +425,12 @@ mod tests {
         let mut dup_cursor = tx.cursor::<ContractStorage>().unwrap();
         let subkey = felt!("0x9");
 
-        let value = FieldElement::from(1u8);
+        let value = Felt::from(1u8);
         let entry1 = StorageEntry { key: subkey, value };
         dup_cursor.upsert(key, entry1).expect(ERROR_UPSERT);
         assert_eq!(dup_cursor.seek_by_key_subkey(key, subkey), Ok(Some(entry1)));
 
-        let value = FieldElement::from(2u8);
+        let value = Felt::from(2u8);
         let entry2 = StorageEntry { key: subkey, value };
         dup_cursor.upsert(key, entry2).expect(ERROR_UPSERT);
         assert_eq!(dup_cursor.seek_by_key_subkey(key, subkey), Ok(Some(entry1)));
@@ -321,7 +439,7 @@ mod tests {
 
     #[test]
     fn db_cursor_walk() {
-        let env = create_test_db(DbEnvKind::RW);
+        let env = create_test_db();
 
         let value = Header::default();
         let key = 1u64;
@@ -346,32 +464,30 @@ mod tests {
 
     #[test]
     fn db_walker() {
-        let db = create_test_db(DbEnvKind::RW);
+        let db = create_test_db();
 
         // PUT (0, 0), (1, 0), (2, 0)
         let tx = db.tx_mut().expect(ERROR_INIT_TX);
-        (0..3).try_for_each(|key| tx.put::<BlockHashes>(key, FieldElement::ZERO)).expect(ERROR_PUT);
+        (0..3).try_for_each(|key| tx.put::<BlockHashes>(key, Felt::ZERO)).expect(ERROR_PUT);
         tx.commit().expect(ERROR_COMMIT);
 
         let tx = db.tx().expect(ERROR_INIT_TX);
         let mut cursor = tx.cursor::<BlockHashes>().expect(ERROR_INIT_CURSOR);
         let mut walker = Walker::new(&mut cursor, None);
 
-        assert_eq!(walker.next(), Some(Ok((0, FieldElement::ZERO))));
-        assert_eq!(walker.next(), Some(Ok((1, FieldElement::ZERO))));
-        assert_eq!(walker.next(), Some(Ok((2, FieldElement::ZERO))));
+        assert_eq!(walker.next(), Some(Ok((0, Felt::ZERO))));
+        assert_eq!(walker.next(), Some(Ok((1, Felt::ZERO))));
+        assert_eq!(walker.next(), Some(Ok((2, Felt::ZERO))));
         assert_eq!(walker.next(), None);
     }
 
     #[test]
     fn db_cursor_insert() {
-        let db = create_test_db(DbEnvKind::RW);
+        let db = create_test_db();
 
         // PUT
         let tx = db.tx_mut().expect(ERROR_INIT_TX);
-        (0..=4)
-            .try_for_each(|key| tx.put::<BlockHashes>(key, FieldElement::ZERO))
-            .expect(ERROR_PUT);
+        (0..=4).try_for_each(|key| tx.put::<BlockHashes>(key, Felt::ZERO)).expect(ERROR_PUT);
         tx.commit().expect(ERROR_COMMIT);
 
         let key_to_insert = 5;
@@ -379,19 +495,19 @@ mod tests {
         let mut cursor = tx.cursor::<BlockHashes>().expect(ERROR_INIT_CURSOR);
 
         // INSERT
-        assert_eq!(cursor.insert(key_to_insert, FieldElement::ZERO), Ok(()));
-        assert_eq!(cursor.current(), Ok(Some((key_to_insert, FieldElement::ZERO))));
+        assert_eq!(cursor.insert(key_to_insert, Felt::ZERO), Ok(()));
+        assert_eq!(cursor.current(), Ok(Some((key_to_insert, Felt::ZERO))));
 
         // INSERT (failure)
         assert_eq!(
-            cursor.insert(key_to_insert, FieldElement::ZERO),
+            cursor.insert(key_to_insert, Felt::ZERO),
             Err(DatabaseError::Write {
                 table: BlockHashes::NAME,
                 error: libmdbx::Error::KeyExist,
                 key: Box::from(key_to_insert.encode())
             })
         );
-        assert_eq!(cursor.current(), Ok(Some((key_to_insert, FieldElement::ZERO))));
+        assert_eq!(cursor.current(), Ok(Some((key_to_insert, Felt::ZERO))));
 
         tx.commit().expect(ERROR_COMMIT);
 
@@ -405,8 +521,8 @@ mod tests {
 
     #[test]
     fn db_dup_sort() {
-        let env = create_test_db(DbEnvKind::RW);
-        let key = ContractAddress::from(felt!("0xa2c122be93b0074270ebee7f6b7292c7deb45047"));
+        let env = create_test_db();
+        let key = address!("0xa2c122be93b0074270ebee7f6b7292c7deb45047");
 
         // PUT (0,0)
         let value00 = StorageEntry::default();

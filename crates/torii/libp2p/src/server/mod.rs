@@ -7,24 +7,26 @@ use std::time::Duration;
 use std::{fs, io};
 
 use chrono::Utc;
-use crypto_bigint::U256;
-use dojo_types::primitive::Primitive;
 use dojo_types::schema::Ty;
-use dojo_world::contracts::naming::compute_selector_from_names;
+use dojo_world::contracts::naming::compute_selector_from_tag;
 use futures::StreamExt;
-use indexmap::IndexMap;
 use libp2p::core::multiaddr::Protocol;
 use libp2p::core::muxing::StreamMuxerBox;
+use libp2p::core::upgrade::Version;
 use libp2p::core::Multiaddr;
 use libp2p::gossipsub::{self, IdentTopic};
 use libp2p::swarm::{NetworkBehaviour, SwarmEvent};
-use libp2p::{identify, identity, noise, ping, relay, tcp, yamux, PeerId, Swarm, Transport};
+use libp2p::{
+    dns, identify, identity, noise, ping, relay, tcp, websocket, yamux, PeerId, Swarm, Transport,
+};
 use libp2p_webrtc as webrtc;
 use rand::thread_rng;
 use starknet::core::types::{BlockId, BlockTag, Felt, FunctionCall};
 use starknet::core::utils::get_selector_from_name;
 use starknet::providers::Provider;
-use starknet_crypto::{poseidon_hash_many, verify};
+use starknet_crypto::poseidon_hash_many;
+use torii_core::executor::QueryMessage;
+use torii_core::sql::utils::felts_to_sql_string;
 use torii_core::sql::Sql;
 use tracing::{info, warn};
 use webrtc::tokio::Certificate;
@@ -34,11 +36,9 @@ use crate::errors::Error;
 
 mod events;
 
-use dojo_world::contracts::model::ModelReader;
-
 use crate::server::events::ServerEvent;
-use crate::typed_data::PrimitiveType;
-use crate::types::Message;
+use crate::typed_data::{encode_type, parse_value_to_ty, PrimitiveType, TypedData};
+use crate::types::{Message, Signature};
 
 pub(crate) const LOG_TARGET: &str = "torii::relay::server";
 
@@ -65,6 +65,7 @@ impl<P: Provider + Sync> Relay<P> {
         provider: P,
         port: u16,
         port_webrtc: u16,
+        port_websocket: u16,
         local_key_path: Option<String>,
         cert_path: Option<String>,
     ) -> Result<Self, Error> {
@@ -89,10 +90,24 @@ impl<P: Provider + Sync> Relay<P> {
             .with_tcp(tcp::Config::default(), noise::Config::new, yamux::Config::default)?
             .with_quic()
             .with_other_transport(|key| {
-                Ok(webrtc::tokio::Transport::new(key.clone(), cert)
-                    .map(|(peer_id, conn), _| (peer_id, StreamMuxerBox::new(conn))))
+                webrtc::tokio::Transport::new(key.clone(), cert)
+                    .map(|(peer_id, conn), _| (peer_id, StreamMuxerBox::new(conn)))
             })
             .expect("Failed to create WebRTC transport")
+            .with_other_transport(|key| {
+                let transport = websocket::WsConfig::new(
+                    dns::tokio::Transport::system(tcp::tokio::Transport::new(
+                        tcp::Config::default(),
+                    ))
+                    .unwrap(),
+                );
+
+                transport
+                    .upgrade(Version::V1)
+                    .authenticate(noise::Config::new(key).unwrap())
+                    .multiplex(yamux::Config::default())
+            })
+            .expect("Failed to create WebSocket transport")
             .with_behaviour(|key| {
                 // Hash messages by their content. No two messages of the same content will be
                 // propagated.
@@ -113,7 +128,7 @@ impl<P: Provider + Sync> Relay<P> {
                     relay: relay::Behaviour::new(key.public().to_peer_id(), Default::default()),
                     ping: ping::Behaviour::new(ping::Config::new()),
                     identify: identify::Behaviour::new(identify::Config::new(
-                        "/torii-relay/0.0.1".to_string(),
+                        format!("/torii-relay/{}", env!("CARGO_PKG_VERSION")),
                         key.public(),
                     )),
                     gossipsub: gossipsub::Behaviour::new(
@@ -144,6 +159,12 @@ impl<P: Provider + Sync> Relay<P> {
             .with(Protocol::Udp(port_webrtc))
             .with(Protocol::WebRTCDirect);
         swarm.listen_on(listen_addr_webrtc.clone())?;
+
+        // WS
+        let listen_addr_wss = Multiaddr::from(Ipv4Addr::UNSPECIFIED)
+            .with(Protocol::Tcp(port_websocket))
+            .with(Protocol::Ws("/".to_string().into()));
+        swarm.listen_on(listen_addr_wss.clone())?;
 
         // Clients will send their messages to the "message" topic
         // with a room name as the message data.
@@ -182,7 +203,7 @@ impl<P: Provider + Sync> Relay<P> {
                                 }
                             };
 
-                            let ty = match validate_message(&self.db, &data.message.message).await {
+                            let ty = match validate_message(&self.db, &data.message).await {
                                 Ok(parsed_message) => parsed_message,
                                 Err(e) => {
                                     info!(
@@ -226,6 +247,9 @@ impl<P: Provider + Sync> Relay<P> {
                                     continue;
                                 }
                             };
+                            let keys_str = felts_to_sql_string(&keys);
+                            let entity_id = poseidon_hash_many(&keys);
+                            let model_id = ty_model_id(&ty).unwrap();
 
                             // select only identity field, if doesn't exist, empty string
                             let query = format!(
@@ -233,7 +257,7 @@ impl<P: Provider + Sync> Relay<P> {
                                 ty.name()
                             );
                             let entity_identity: Option<String> = match sqlx::query_scalar(&query)
-                                .bind(format!("{:#x}", poseidon_hash_many(&keys)))
+                                .bind(format!("{:#x}", entity_id))
                                 .fetch_optional(&mut *pool)
                                 .await
                             {
@@ -248,44 +272,29 @@ impl<P: Provider + Sync> Relay<P> {
                                 }
                             };
 
-                            if entity_identity.is_none() {
-                                // we can set the entity without checking identity
-                                if let Err(e) = self
-                                    .db
-                                    .set_entity(
-                                        ty,
-                                        &message_id.to_string(),
-                                        Utc::now().timestamp() as u64,
-                                    )
-                                    .await
-                                {
-                                    info!(
-                                        target: LOG_TARGET,
-                                        error = %e,
-                                        "Setting message."
-                                    );
-                                    continue;
-                                } else {
-                                    info!(
-                                        target: LOG_TARGET,
-                                        message_id = %message_id,
-                                        peer_id = %peer_id,
-                                        "Message set."
-                                    );
-                                    continue;
-                                }
-                            }
-
-                            let entity_identity = match Felt::from_str(&entity_identity.unwrap()) {
-                                Ok(identity) => identity,
-                                Err(e) => {
-                                    warn!(
-                                        target: LOG_TARGET,
-                                        error = %e,
-                                        "Parsing identity."
-                                    );
-                                    continue;
-                                }
+                            let entity_identity = match entity_identity {
+                                Some(identity) => match Felt::from_str(&identity) {
+                                    Ok(identity) => identity,
+                                    Err(e) => {
+                                        warn!(
+                                            target: LOG_TARGET,
+                                            error = %e,
+                                            "Parsing identity."
+                                        );
+                                        continue;
+                                    }
+                                },
+                                None => match get_identity_from_ty(&ty) {
+                                    Ok(identity) => identity,
+                                    Err(e) => {
+                                        warn!(
+                                            target: LOG_TARGET,
+                                            error = %e,
+                                            "Getting identity from message."
+                                        );
+                                        continue;
+                                    }
+                                },
                             };
 
                             // TODO: have a nonce in model to check
@@ -293,50 +302,15 @@ impl<P: Provider + Sync> Relay<P> {
                             // to prevent replay attacks.
 
                             // Verify the signature
-                            let message_hash =
-                                if let Ok(message) = data.message.encode(entity_identity) {
-                                    message
-                                } else {
-                                    info!(
-                                        target: LOG_TARGET,
-                                        "Encoding message."
-                                    );
-                                    continue;
-                                };
-
-                            let public_key = match self
-                                .provider
-                                .call(
-                                    FunctionCall {
-                                        contract_address: entity_identity,
-                                        entry_point_selector: get_selector_from_name(
-                                            "getPublicKey",
-                                        )
-                                        .unwrap(),
-                                        calldata: vec![],
-                                    },
-                                    BlockId::Tag(BlockTag::Pending),
-                                )
-                                .await
+                            if !match validate_signature(
+                                &self.provider,
+                                entity_identity,
+                                &data.message,
+                                &data.signature,
+                            )
+                            .await
                             {
-                                Ok(res) => res[0],
-                                Err(e) => {
-                                    warn!(
-                                        target: LOG_TARGET,
-                                        error = %e,
-                                        "Fetching public key."
-                                    );
-                                    continue;
-                                }
-                            };
-
-                            if !match verify(
-                                &public_key,
-                                &message_hash,
-                                &data.signature_r,
-                                &data.signature_s,
-                            ) {
-                                Ok(valid) => valid,
+                                Ok(res) => res,
                                 Err(e) => {
                                     warn!(
                                         target: LOG_TARGET,
@@ -355,21 +329,23 @@ impl<P: Provider + Sync> Relay<P> {
                                 continue;
                             }
 
-                            if let Err(e) = self
-                                .db
-                                // event id is message id
-                                .set_entity(
-                                    ty,
-                                    &message_id.to_string(),
-                                    Utc::now().timestamp() as u64,
-                                )
-                                .await
+                            if let Err(e) = set_entity(
+                                &mut self.db,
+                                ty,
+                                &message_id.to_string(),
+                                Utc::now().timestamp() as u64,
+                                entity_id,
+                                model_id,
+                                &keys_str,
+                            )
+                            .await
                             {
                                 info!(
                                     target: LOG_TARGET,
                                     error = %e,
                                     "Setting message."
                                 );
+                                continue;
                             }
 
                             info!(
@@ -399,11 +375,13 @@ impl<P: Provider + Sync> Relay<P> {
                             );
                         }
                         ServerEvent::Identify(identify::Event::Received {
+                            connection_id,
                             info: identify::Info { observed_addr, .. },
                             peer_id,
                         }) => {
                             info!(
                                 target: LOG_TARGET,
+                                connection_id = %connection_id,
                                 peer_id = %peer_id,
                                 observed_addr = %observed_addr,
                                 "Received identify event."
@@ -432,6 +410,57 @@ impl<P: Provider + Sync> Relay<P> {
     }
 }
 
+async fn validate_signature<P: Provider + Sync>(
+    provider: &P,
+    entity_identity: Felt,
+    message: &TypedData,
+    signature: &Signature,
+) -> Result<bool, Error> {
+    let message_hash = message.encode(entity_identity)?;
+
+    match signature {
+        Signature::Account(signature) => {
+            let mut calldata = vec![message_hash, Felt::from(signature.len())];
+            calldata.extend(signature);
+            provider
+                .call(
+                    FunctionCall {
+                        contract_address: entity_identity,
+                        entry_point_selector: get_selector_from_name("is_valid_signature").unwrap(),
+                        calldata,
+                    },
+                    BlockId::Tag(BlockTag::Pending),
+                )
+                .await
+                .map_err(Error::ProviderError)
+                .map(|res| res[0] != Felt::ZERO)
+        }
+        Signature::Session(signature) => {
+            let mut calldata = vec![
+                Felt::ONE,
+                get_selector_from_name(&encode_type(&message.primary_type, &message.types)?)
+                    .map_err(|e| Error::InvalidMessageError(e.to_string()))?,
+                message_hash,
+                signature.len().into(),
+            ];
+            calldata.extend(signature);
+            provider
+                .call(
+                    FunctionCall {
+                        contract_address: entity_identity,
+                        entry_point_selector: get_selector_from_name("is_session_sigature_valid")
+                            .unwrap(),
+                        calldata,
+                    },
+                    BlockId::Tag(BlockTag::Pending),
+                )
+                .await
+                .map_err(Error::ProviderError)
+                .map(|res| res[0] != Felt::ZERO)
+        }
+    }
+}
+
 fn ty_keys(ty: &Ty) -> Result<Vec<Felt>, Error> {
     if let Ty::Struct(s) = &ty {
         let mut keys = Vec::new();
@@ -446,216 +475,27 @@ fn ty_keys(ty: &Ty) -> Result<Vec<Felt>, Error> {
     }
 }
 
-pub fn parse_value_to_ty(value: &PrimitiveType, ty: &mut Ty) -> Result<(), Error> {
-    match value {
-        PrimitiveType::Object(object) => match ty {
-            Ty::Struct(struct_) => {
-                for (key, value) in object {
-                    let member =
-                        struct_.children.iter_mut().find(|member| member.name == *key).ok_or_else(
-                            || Error::InvalidMessageError(format!("Member {} not found", key)),
-                        )?;
+fn ty_model_id(ty: &Ty) -> Result<Felt, Error> {
+    let namespaced_name = ty.name();
 
-                    parse_value_to_ty(value, &mut member.ty)?;
-                }
-            }
-            // U256 is an object with two u128 fields
-            // low and high
-            Ty::Primitive(Primitive::U256(u256)) => {
-                let mut low = Ty::Primitive(Primitive::U128(None));
-                let mut high = Ty::Primitive(Primitive::U128(None));
-
-                // parse the low and high fields
-                parse_value_to_ty(&object["low"], &mut low)?;
-                parse_value_to_ty(&object["high"], &mut high)?;
-
-                let low = low.as_primitive().unwrap().as_u128().unwrap();
-                let high = high.as_primitive().unwrap().as_u128().unwrap();
-
-                let mut bytes = [0u8; 32];
-                bytes[..16].copy_from_slice(&high.to_be_bytes());
-                bytes[16..].copy_from_slice(&low.to_be_bytes());
-
-                *u256 = Some(U256::from_be_slice(&bytes));
-            }
-            // an enum is a SNIP-12 compliant object with a single key
-            // where the K is the variant name
-            // and the value is the variant value
-            Ty::Enum(enum_) => {
-                let (option_name, value) = object.first().ok_or_else(|| {
-                    Error::InvalidMessageError("Enum variant not found".to_string())
-                })?;
-
-                enum_.options.iter_mut().for_each(|option| {
-                    if option.name == *option_name {
-                        parse_value_to_ty(value, &mut option.ty).unwrap();
-                    }
-                });
-
-                enum_.set_option(option_name).map_err(|e| {
-                    Error::InvalidMessageError(format!("Failed to set enum option: {}", e))
-                })?;
-            }
-            _ => {
-                return Err(Error::InvalidMessageError(format!(
-                    "Invalid object type for {}",
-                    ty.name()
-                )));
-            }
-        },
-        PrimitiveType::Array(values) => match ty {
-            Ty::Array(array) => {
-                let inner_type = array[0].clone();
-
-                // clear the array, which contains the inner type
-                array.clear();
-
-                // parse each value to the inner type
-                for value in values {
-                    let mut ty = inner_type.clone();
-                    parse_value_to_ty(value, &mut ty)?;
-                    array.push(ty);
-                }
-            }
-            Ty::Tuple(tuple) => {
-                // our array values need to match the length of the tuple
-                if tuple.len() != values.len() {
-                    return Err(Error::InvalidMessageError("Tuple length mismatch".to_string()));
-                }
-
-                for (i, value) in tuple.iter_mut().enumerate() {
-                    parse_value_to_ty(&values[i], value)?;
-                }
-            }
-            _ => {
-                return Err(Error::InvalidMessageError(format!(
-                    "Invalid array type for {}",
-                    ty.name()
-                )));
-            }
-        },
-        PrimitiveType::Number(number) => match ty {
-            Ty::Primitive(primitive) => match *primitive {
-                Primitive::U8(ref mut u8) => {
-                    *u8 = Some(number.as_u64().unwrap() as u8);
-                }
-                Primitive::U16(ref mut u16) => {
-                    *u16 = Some(number.as_u64().unwrap() as u16);
-                }
-                Primitive::U32(ref mut u32) => {
-                    *u32 = Some(number.as_u64().unwrap() as u32);
-                }
-                Primitive::USize(ref mut usize) => {
-                    *usize = Some(number.as_u64().unwrap() as u32);
-                }
-                Primitive::U64(ref mut u64) => {
-                    *u64 = Some(number.as_u64().unwrap());
-                }
-                _ => {
-                    return Err(Error::InvalidMessageError(format!(
-                        "Invalid number type for {}",
-                        ty.name()
-                    )));
-                }
-            },
-            _ => {
-                return Err(Error::InvalidMessageError(format!(
-                    "Invalid number type for {}",
-                    ty.name()
-                )));
-            }
-        },
-        PrimitiveType::Bool(boolean) => {
-            *ty = Ty::Primitive(Primitive::Bool(Some(*boolean)));
-        }
-        PrimitiveType::String(string) => match ty {
-            Ty::Primitive(primitive) => match primitive {
-                Primitive::U8(v) => {
-                    *v = Some(u8::from_str(string).unwrap());
-                }
-                Primitive::U16(v) => {
-                    *v = Some(u16::from_str(string).unwrap());
-                }
-                Primitive::U32(v) => {
-                    *v = Some(u32::from_str(string).unwrap());
-                }
-                Primitive::USize(v) => {
-                    *v = Some(u32::from_str(string).unwrap());
-                }
-                Primitive::U64(v) => {
-                    *v = Some(u64::from_str(string).unwrap());
-                }
-                Primitive::U128(v) => {
-                    *v = Some(u128::from_str(string).unwrap());
-                }
-                Primitive::Felt252(v) => {
-                    *v = Some(Felt::from_str(string).unwrap());
-                }
-                Primitive::ClassHash(v) => {
-                    *v = Some(Felt::from_str(string).unwrap());
-                }
-                Primitive::ContractAddress(v) => {
-                    *v = Some(Felt::from_str(string).unwrap());
-                }
-                Primitive::Bool(v) => {
-                    *v = Some(bool::from_str(string).unwrap());
-                }
-                _ => {
-                    return Err(Error::InvalidMessageError("Invalid primitive type".to_string()));
-                }
-            },
-            Ty::ByteArray(s) => {
-                s.clone_from(string);
-            }
-            _ => {
-                return Err(Error::InvalidMessageError(format!(
-                    "Invalid string type for {}",
-                    ty.name()
-                )));
-            }
-        },
-    }
-
-    Ok(())
+    let selector = compute_selector_from_tag(&namespaced_name);
+    Ok(selector)
 }
 
 // Validates the message model
 // and returns the identity and signature
-async fn validate_message(
-    db: &Sql,
-    message: &IndexMap<String, PrimitiveType>,
-) -> Result<Ty, Error> {
-    let (selector, model) = if let Some(model_name) = message.get("model") {
-        if let PrimitiveType::String(model_name) = model_name {
-            let (namespace, name) = model_name.split_once('-').ok_or_else(|| {
-                Error::InvalidMessageError(
-                    "Model name is not in the format namespace-model".to_string(),
-                )
-            })?;
-
-            (compute_selector_from_names(namespace, name), model_name)
-        } else {
-            return Err(Error::InvalidMessageError("Model name is not a string".to_string()));
-        }
-    } else {
-        return Err(Error::InvalidMessageError("Model name is missing".to_string()));
-    };
+async fn validate_message(db: &Sql, message: &TypedData) -> Result<Ty, Error> {
+    let selector = compute_selector_from_tag(&message.primary_type);
 
     let mut ty = db
         .model(selector)
         .await
-        .map_err(|e| Error::InvalidMessageError(format!("Model {} not found: {}", model, e)))?
-        .schema()
-        .await
         .map_err(|e| {
-            Error::InvalidMessageError(format!("Failed to get schema for model {}: {}", model, e))
-        })?;
+            Error::InvalidMessageError(format!("Model {} not found: {}", message.primary_type, e))
+        })?
+        .schema;
 
-    if let Some(object) = message.get(model) {
-        parse_value_to_ty(object, &mut ty)?;
-    } else {
-        return Err(Error::InvalidMessageError("Model is missing".to_string()));
-    };
+    parse_value_to_ty(&PrimitiveType::Object(message.message.clone()), &mut ty)?;
 
     Ok(ty)
 }
@@ -693,6 +533,35 @@ fn read_or_create_certificate(path: &Path) -> anyhow::Result<Certificate> {
     info!(target: LOG_TARGET, path = %path.display(), "Generated new certificate.");
 
     Ok(cert)
+}
+
+fn get_identity_from_ty(ty: &Ty) -> Result<Felt, Error> {
+    let identity = ty
+        .as_struct()
+        .ok_or_else(|| Error::InvalidMessageError("Message is not a struct".to_string()))?
+        .get("identity")
+        .ok_or_else(|| Error::InvalidMessageError("No field identity".to_string()))?
+        .as_primitive()
+        .ok_or_else(|| Error::InvalidMessageError("Identity is not a primitive".to_string()))?
+        .as_contract_address()
+        .ok_or_else(|| {
+            Error::InvalidMessageError("Identity is not a contract address".to_string())
+        })?;
+    Ok(identity)
+}
+
+async fn set_entity(
+    db: &mut Sql,
+    ty: Ty,
+    message_id: &str,
+    block_timestamp: u64,
+    entity_id: Felt,
+    model_id: Felt,
+    keys: &str,
+) -> anyhow::Result<()> {
+    db.set_entity(ty, message_id, block_timestamp, entity_id, model_id, Some(keys)).await?;
+    db.executor.send(QueryMessage::execute())?;
+    Ok(())
 }
 
 #[cfg(test)]

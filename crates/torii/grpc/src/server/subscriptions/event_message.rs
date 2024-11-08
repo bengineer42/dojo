@@ -8,35 +8,44 @@ use std::task::{Context, Poll};
 use futures::Stream;
 use futures_util::StreamExt;
 use rand::Rng;
-use sqlx::{Pool, Sqlite};
 use starknet::core::types::Felt;
-use tokio::sync::mpsc::{channel, Receiver};
+use tokio::sync::mpsc::{
+    channel, unbounded_channel, Receiver, Sender, UnboundedReceiver, UnboundedSender,
+};
 use tokio::sync::RwLock;
-use torii_core::cache::ModelCache;
 use torii_core::error::{Error, ParseError};
-use torii_core::model::build_sql_query;
 use torii_core::simple_broker::SimpleBroker;
 use torii_core::sql::FELT_DELIMITER;
-use torii_core::types::EventMessage;
+use torii_core::types::OptimisticEventMessage;
 use tracing::{error, trace};
 
-use super::entity::EntitiesSubscriber;
+use super::match_entity_keys;
 use crate::proto;
 use crate::proto::world::SubscribeEntityResponse;
-use crate::server::map_row_to_entity;
-use crate::types::{EntityKeysClause, PatternMatching};
+use crate::types::EntityKeysClause;
 
 pub(crate) const LOG_TARGET: &str = "torii::grpc::server::subscriptions::event_message";
 
+#[derive(Debug)]
+pub struct EventMessageSubscriber {
+    /// Entity ids that the subscriber is interested in
+    pub(crate) clauses: Vec<EntityKeysClause>,
+    /// Whether the subscriber is interested in historical event messages
+    pub(crate) historical: bool,
+    /// The channel to send the response back to the subscriber.
+    pub(crate) sender: Sender<Result<proto::world::SubscribeEntityResponse, tonic::Status>>,
+}
+
 #[derive(Debug, Default)]
 pub struct EventMessageManager {
-    subscribers: RwLock<HashMap<u64, EntitiesSubscriber>>,
+    subscribers: RwLock<HashMap<u64, EventMessageSubscriber>>,
 }
 
 impl EventMessageManager {
     pub async fn add_subscriber(
         &self,
         clauses: Vec<EntityKeysClause>,
+        historical: bool,
     ) -> Result<Receiver<Result<proto::world::SubscribeEntityResponse, tonic::Status>>, Error> {
         let subscription_id = rand::thread_rng().gen::<u64>();
         let (sender, receiver) = channel(1);
@@ -49,12 +58,17 @@ impl EventMessageManager {
         self.subscribers
             .write()
             .await
-            .insert(subscription_id, EntitiesSubscriber { clauses, sender });
+            .insert(subscription_id, EventMessageSubscriber { clauses, historical, sender });
 
         Ok(receiver)
     }
 
-    pub async fn update_subscriber(&self, id: u64, clauses: Vec<EntityKeysClause>) {
+    pub async fn update_subscriber(
+        &self,
+        id: u64,
+        clauses: Vec<EntityKeysClause>,
+        historical: bool,
+    ) {
         let sender = {
             let subscribers = self.subscribers.read().await;
             if let Some(subscriber) = subscribers.get(&id) {
@@ -64,7 +78,10 @@ impl EventMessageManager {
             }
         };
 
-        self.subscribers.write().await.insert(id, EntitiesSubscriber { clauses, sender });
+        self.subscribers
+            .write()
+            .await
+            .insert(id, EventMessageSubscriber { clauses, historical, sender });
     }
 
     pub(super) async fn remove_subscriber(&self, id: u64) {
@@ -75,31 +92,37 @@ impl EventMessageManager {
 #[must_use = "Service does nothing unless polled"]
 #[allow(missing_debug_implementations)]
 pub struct Service {
-    pool: Pool<Sqlite>,
-    subs_manager: Arc<EventMessageManager>,
-    model_cache: Arc<ModelCache>,
-    simple_broker: Pin<Box<dyn Stream<Item = EventMessage> + Send>>,
+    simple_broker: Pin<Box<dyn Stream<Item = OptimisticEventMessage> + Send>>,
+    event_sender: UnboundedSender<OptimisticEventMessage>,
 }
 
 impl Service {
-    pub fn new(
-        pool: Pool<Sqlite>,
-        subs_manager: Arc<EventMessageManager>,
-        model_cache: Arc<ModelCache>,
-    ) -> Self {
-        Self {
-            pool,
-            subs_manager,
-            model_cache,
-            simple_broker: Box::pin(SimpleBroker::<EventMessage>::subscribe()),
-        }
+    pub fn new(subs_manager: Arc<EventMessageManager>) -> Self {
+        let (event_sender, event_receiver) = unbounded_channel();
+        let service = Self {
+            simple_broker: Box::pin(SimpleBroker::<OptimisticEventMessage>::subscribe()),
+            event_sender,
+        };
+
+        tokio::spawn(Self::publish_updates(subs_manager, event_receiver));
+
+        service
     }
 
     async fn publish_updates(
         subs: Arc<EventMessageManager>,
-        cache: Arc<ModelCache>,
-        pool: Pool<Sqlite>,
-        entity: &EventMessage,
+        mut event_receiver: UnboundedReceiver<OptimisticEventMessage>,
+    ) {
+        while let Some(event) = event_receiver.recv().await {
+            if let Err(e) = Self::process_event_update(&subs, &event).await {
+                error!(target = LOG_TARGET, error = %e, "Processing event update.");
+            }
+        }
+    }
+
+    async fn process_event_update(
+        subs: &Arc<EventMessageManager>,
+        entity: &OptimisticEventMessage,
     ) -> Result<(), Error> {
         let mut closed_stream = Vec::new();
         let hashed = Felt::from_str(&entity.id).map_err(ParseError::FromStr)?;
@@ -112,107 +135,28 @@ impl Service {
             .map_err(ParseError::FromStr)?;
 
         for (idx, sub) in subs.subscribers.read().await.iter() {
+            // Check if the subscriber is interested in this historical or non-historical event
+            if sub.historical != entity.historical {
+                continue;
+            }
+
             // Check if the subscriber is interested in this entity
             // If we have a clause of hashed keys, then check that the id of the entity
             // is in the list of hashed keys.
 
             // If we have a clause of keys, then check that the key pattern of the entity
             // matches the key pattern of the subscriber.
-            if !sub.clauses.iter().any(|clause| match clause {
-                EntityKeysClause::HashedKeys(hashed_keys) => {
-                    hashed_keys.is_empty() || hashed_keys.contains(&hashed)
-                }
-                EntityKeysClause::Keys(clause) => {
-                    // if we have a model clause, then we need to check that the entity
-                    // has an updated model and that the model name matches the clause
-                    if let Some(updated_model) = &entity.updated_model {
-                        let name = updated_model.name();
-                        let (namespace, name) = name.split_once('-').unwrap();
-
-                        if !clause.models.is_empty()
-                            && !clause.models.iter().any(|clause_model| {
-                                let (clause_namespace, clause_model) =
-                                    clause_model.split_once('-').unwrap();
-                                // if both namespace and model are empty, we should match all.
-                                // if namespace is specified and model is empty or * we should match
-                                // all models in the namespace
-                                // if namespace and model are specified, we should match the
-                                // specific model
-                                (clause_namespace.is_empty()
-                                    || clause_namespace == namespace
-                                    || clause_namespace == "*")
-                                    && (clause_model.is_empty()
-                                        || clause_model == name
-                                        || clause_model == "*")
-                            })
-                        {
-                            return false;
-                        }
-                    }
-
-                    // if the key pattern doesnt match our subscribers key pattern, skip
-                    // ["", "0x0"] would match with keys ["0x...", "0x0", ...]
-                    if clause.pattern_matching == PatternMatching::FixedLen
-                        && keys.len() != clause.keys.len()
-                    {
-                        return false;
-                    }
-
-                    return keys.iter().enumerate().all(|(idx, key)| {
-                        // this is going to be None if our key pattern overflows the subscriber
-                        // key pattern in this case we should skip
-                        let sub_key = clause.keys.get(idx);
-
-                        match sub_key {
-                            // the key in the subscriber must match the key of the entity
-                            // athis index
-                            Some(Some(sub_key)) => key == sub_key,
-                            // otherwise, if we have no key we should automatically match.
-                            // or.. we overflowed the subscriber key pattern
-                            // but we're in VariableLen pattern matching
-                            // so we should match all next keys
-                            _ => true,
-                        }
-                    });
-                }
-            }) {
+            if !match_entity_keys(hashed, &keys, &entity.updated_model, &sub.clauses) {
                 continue;
             }
 
-            // publish all updates if ids is empty or only ids that are subscribed to
-            let models_query = r#"
-                    SELECT group_concat(event_model.model_id) as model_ids
-                    FROM event_messages
-                    JOIN event_model ON event_messages.id = event_model.entity_id
-                    WHERE event_messages.id = ?
-                    GROUP BY event_messages.id
-                "#;
-            let (model_ids,): (String,) =
-                sqlx::query_as(models_query).bind(&entity.id).fetch_one(&pool).await?;
-            let model_ids: Vec<Felt> = model_ids
-                .split(',')
-                .map(Felt::from_str)
-                .collect::<Result<_, _>>()
-                .map_err(ParseError::FromStr)?;
-            let schemas = cache.schemas(&model_ids).await?;
-
-            let (entity_query, arrays_queries) = build_sql_query(
-                &schemas,
-                "event_messages",
-                "event_message_id",
-                Some("event_messages.id = ?"),
-                Some("event_messages.id = ?"),
-            )?;
-
-            let row = sqlx::query(&entity_query).bind(&entity.id).fetch_one(&pool).await?;
-            let mut arrays_rows = HashMap::new();
-            for (name, query) in arrays_queries {
-                let rows = sqlx::query(&query).bind(&entity.id).fetch_all(&pool).await?;
-                arrays_rows.insert(name, rows);
-            }
-
+            // This should NEVER be None
+            let model = entity.updated_model.as_ref().unwrap().as_struct().unwrap().clone();
             let resp = proto::world::SubscribeEntityResponse {
-                entity: Some(map_row_to_entity(&row, &arrays_rows, schemas.clone())?),
+                entity: Some(proto::types::Entity {
+                    hashed_keys: hashed.to_bytes_be().to_vec(),
+                    models: vec![model.into()],
+                }),
                 subscription_id: *idx,
             };
 
@@ -233,18 +177,13 @@ impl Service {
 impl Future for Service {
     type Output = ();
 
-    fn poll(self: std::pin::Pin<&mut Self>, cx: &mut Context<'_>) -> std::task::Poll<Self::Output> {
-        let pin = self.get_mut();
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        let this = self.get_mut();
 
-        while let Poll::Ready(Some(entity)) = pin.simple_broker.poll_next_unpin(cx) {
-            let subs = Arc::clone(&pin.subs_manager);
-            let cache = Arc::clone(&pin.model_cache);
-            let pool = pin.pool.clone();
-            tokio::spawn(async move {
-                if let Err(e) = Service::publish_updates(subs, cache, pool, &entity).await {
-                    error!(target = LOG_TARGET, error = %e, "Publishing entity update.");
-                }
-            });
+        while let Poll::Ready(Some(event)) = this.simple_broker.poll_next_unpin(cx) {
+            if let Err(e) = this.event_sender.send(event) {
+                error!(target = LOG_TARGET, error = %e, "Sending event update to processor.");
+            }
         }
 
         Poll::Pending

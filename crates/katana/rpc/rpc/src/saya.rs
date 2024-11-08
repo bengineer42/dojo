@@ -16,20 +16,17 @@ use katana_tasks::TokioTaskSpawner;
 #[allow(missing_debug_implementations)]
 pub struct SayaApi<EF: ExecutorFactory> {
     backend: Arc<Backend<EF>>,
-    block_producer: Arc<BlockProducer<EF>>,
+    block_producer: BlockProducer<EF>,
 }
 
 impl<EF: ExecutorFactory> Clone for SayaApi<EF> {
     fn clone(&self) -> Self {
-        Self {
-            backend: Arc::clone(&self.backend),
-            block_producer: Arc::clone(&self.block_producer),
-        }
+        Self { backend: Arc::clone(&self.backend), block_producer: self.block_producer.clone() }
     }
 }
 
 impl<EF: ExecutorFactory> SayaApi<EF> {
-    pub fn new(backend: Arc<Backend<EF>>, block_producer: Arc<BlockProducer<EF>>) -> Self {
+    pub fn new(backend: Arc<Backend<EF>>, block_producer: BlockProducer<EF>) -> Self {
         Self { backend, block_producer }
     }
 
@@ -44,7 +41,7 @@ impl<EF: ExecutorFactory> SayaApi<EF> {
 
     /// Returns the pending state if the sequencer is running in _interval_ mode. Otherwise `None`.
     fn pending_executor(&self) -> Option<PendingExecutor> {
-        match &*self.block_producer.inner.read() {
+        match &*self.block_producer.producer.read() {
             BlockProducerMode::Instant(_) => None,
             BlockProducerMode::Interval(producer) => Some(producer.executor()),
         }

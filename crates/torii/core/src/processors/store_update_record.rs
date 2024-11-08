@@ -1,15 +1,13 @@
-use anyhow::{Context, Error, Ok, Result};
+use anyhow::{Error, Ok, Result};
 use async_trait::async_trait;
-use dojo_world::contracts::model::ModelReader;
-use dojo_world::contracts::naming;
+use dojo_types::schema::Ty;
+use dojo_world::contracts::abigen::world::Event as WorldEvent;
 use dojo_world::contracts::world::WorldContractReader;
-use num_traits::ToPrimitive;
-use starknet::core::types::{Event, TransactionReceiptWithBlockInfo};
+use starknet::core::types::Event;
 use starknet::providers::Provider;
 use tracing::info;
 
 use super::EventProcessor;
-use crate::processors::{ENTITY_ID_INDEX, MODEL_INDEX};
 use crate::sql::Sql;
 
 pub(crate) const LOG_TARGET: &str = "torii_core::processors::store_update_record";
@@ -26,16 +24,7 @@ where
         "StoreUpdateRecord".to_string()
     }
 
-    fn validate(&self, event: &Event) -> bool {
-        if event.keys.len() > 1 {
-            info!(
-                target: LOG_TARGET,
-                event_key = %<StoreUpdateRecordProcessor as EventProcessor<P>>::event_key(self),
-                invalid_keys = %<StoreUpdateRecordProcessor as EventProcessor<P>>::event_keys_as_string(self, event),
-                "Invalid event keys."
-            );
-            return false;
-        }
+    fn validate(&self, _event: &Event) -> bool {
         true
     }
 
@@ -45,40 +34,50 @@ where
         db: &mut Sql,
         _block_number: u64,
         block_timestamp: u64,
-        _transaction_receipt: &TransactionReceiptWithBlockInfo,
         event_id: &str,
         event: &Event,
     ) -> Result<(), Error> {
-        let selector = event.data[MODEL_INDEX];
-        let entity_id = event.data[ENTITY_ID_INDEX];
+        // Torii version is coupled to the world version, so we can expect the event to be well
+        // formed.
+        let event = match WorldEvent::try_from(event).unwrap_or_else(|_| {
+            panic!(
+                "Expected {} event to be well formed.",
+                <StoreUpdateRecordProcessor as EventProcessor<P>>::event_key(self)
+            )
+        }) {
+            WorldEvent::StoreUpdateRecord(e) => e,
+            _ => {
+                unreachable!()
+            }
+        };
 
-        let model = db.model(selector).await?;
+        let model_selector = event.selector;
+        let entity_id = event.entity_id;
+
+        let model = db.model(model_selector).await?;
 
         info!(
             target: LOG_TARGET,
-            name = %model.name(),
+            namespace = %model.namespace,
+            name = %model.name,
             entity_id = format!("{:#x}", entity_id),
             "Store update record.",
         );
 
-        let values_start = ENTITY_ID_INDEX + 1;
-        let values_end: usize =
-            values_start + event.data[values_start].to_usize().context("invalid usize")?;
+        let mut entity = model.schema;
+        match entity {
+            Ty::Struct(ref mut struct_) => {
+                // we do not need the keys. the entity Ty has the keys in its schema
+                // so we should get rid of them to avoid trying to deserialize them
+                struct_.children.retain(|field| !field.key);
+            }
+            _ => return Err(anyhow::anyhow!("Expected struct")),
+        }
 
-        // Skip the length to only get the values as they will be deserialized.
-        let values = event.data[values_start + 1..=values_end].to_vec();
+        let mut values = event.values.to_vec();
+        entity.deserialize(&mut values)?;
 
-        let tag = naming::get_tag(model.namespace(), model.name());
-
-        // Keys are read from the db, since we don't have access to them when only
-        // the entity id is passed.
-        let keys = db.get_entity_keys(entity_id, &tag).await?;
-        let mut keys_and_unpacked = [keys, values].concat();
-
-        let mut entity = model.schema().await?;
-        entity.deserialize(&mut keys_and_unpacked)?;
-
-        db.set_entity(entity, event_id, block_timestamp).await?;
+        db.set_entity(entity, event_id, block_timestamp, entity_id, model_selector, None).await?;
         Ok(())
     }
 }

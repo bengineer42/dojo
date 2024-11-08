@@ -4,7 +4,7 @@ use jsonrpsee::core::RpcResult;
 use jsonrpsee::proc_macros::rpc;
 use katana_primitives::block::{BlockIdOrTag, BlockNumber};
 use katana_primitives::transaction::TxHash;
-use katana_primitives::FieldElement;
+use katana_primitives::Felt;
 use katana_rpc_types::block::{
     BlockHashAndNumber, BlockTxCount, MaybePendingBlockWithReceipts, MaybePendingBlockWithTxHashes,
     MaybePendingBlockWithTxs,
@@ -12,7 +12,7 @@ use katana_rpc_types::block::{
 use katana_rpc_types::event::{EventFilterWithPage, EventsPage};
 use katana_rpc_types::message::MsgFromL1;
 use katana_rpc_types::receipt::TxReceiptWithBlockInfo;
-use katana_rpc_types::state_update::StateUpdate;
+use katana_rpc_types::state_update::MaybePendingStateUpdate;
 use katana_rpc_types::transaction::{
     BroadcastedDeclareTx, BroadcastedDeployAccountTx, BroadcastedInvokeTx, BroadcastedTx,
     DeclareTxResult, DeployAccountTxResult, InvokeTxResult, Tx,
@@ -61,14 +61,14 @@ pub trait StarknetApi {
 
     /// Get the information about the result of executing the requested block.
     #[method(name = "getStateUpdate")]
-    async fn get_state_update(&self, block_id: BlockIdOrTag) -> RpcResult<StateUpdate>;
+    async fn get_state_update(&self, block_id: BlockIdOrTag) -> RpcResult<MaybePendingStateUpdate>;
 
     /// Get the value of the storage at the given address and key
     #[method(name = "getStorageAt")]
     async fn get_storage_at(
         &self,
-        contract_address: FieldElement,
-        key: FieldElement,
+        contract_address: Felt,
+        key: Felt,
         block_id: BlockIdOrTag,
     ) -> RpcResult<FeltAsHex>;
 
@@ -101,11 +101,8 @@ pub trait StarknetApi {
 
     /// Get the contract class definition in the given block associated with the given hash.
     #[method(name = "getClass")]
-    async fn get_class(
-        &self,
-        block_id: BlockIdOrTag,
-        class_hash: FieldElement,
-    ) -> RpcResult<ContractClass>;
+    async fn get_class(&self, block_id: BlockIdOrTag, class_hash: Felt)
+    -> RpcResult<ContractClass>;
 
     /// Get the contract class hash in the given block for the contract deployed at the given
     /// address.
@@ -113,7 +110,7 @@ pub trait StarknetApi {
     async fn get_class_hash_at(
         &self,
         block_id: BlockIdOrTag,
-        contract_address: FieldElement,
+        contract_address: Felt,
     ) -> RpcResult<FeltAsHex>;
 
     /// Get the contract class definition in the given block at the given address.
@@ -121,7 +118,7 @@ pub trait StarknetApi {
     async fn get_class_at(
         &self,
         block_id: BlockIdOrTag,
-        contract_address: FieldElement,
+        contract_address: Felt,
     ) -> RpcResult<ContractClass>;
 
     /// Get the number of transactions in a block given a block id.
@@ -180,7 +177,7 @@ pub trait StarknetApi {
     async fn get_nonce(
         &self,
         block_id: BlockIdOrTag,
-        contract_address: FieldElement,
+        contract_address: Felt,
     ) -> RpcResult<FeltAsHex>;
 }
 

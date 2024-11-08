@@ -1,9 +1,14 @@
 #[cfg(test)]
 mod tests {
-    use dojo_world::metadata::{project_to_world_metadata, ProjectMetadata};
+    use std::collections::HashMap;
+
+    use dojo_world::config::{ProfileConfig, WorldMetadata};
     use sqlx::SqlitePool;
     use starknet::core::types::Felt;
+    use tokio::sync::broadcast;
+    use torii_core::executor::Executor;
     use torii_core::sql::Sql;
+    use torii_core::types::ContractType;
 
     use crate::schema::build_schema;
     use crate::tests::{run_graphql_query, Connection, Content, Metadata as SqlMetadata, Social};
@@ -47,30 +52,41 @@ mod tests {
 
     #[sqlx::test(migrations = "../migrations")]
     async fn test_metadata(pool: SqlitePool) {
-        let mut db = Sql::new(pool.clone(), Felt::ZERO, Felt::ZERO).await.unwrap();
+        let (shutdown_tx, _) = broadcast::channel(1);
+        let (mut executor, sender) =
+            Executor::new(pool.clone(), shutdown_tx.clone()).await.unwrap();
+        tokio::spawn(async move {
+            executor.run().await.unwrap();
+        });
+        let mut db =
+            Sql::new(pool.clone(), sender, &HashMap::from([(Felt::ZERO, ContractType::WORLD)]))
+                .await
+                .unwrap();
         let schema = build_schema(&pool).await.unwrap();
 
         let cover_img = "QWxsIHlvdXIgYmFzZSBiZWxvbmcgdG8gdXM=";
-        let project_metadata: ProjectMetadata = toml::from_str(
+        let profile_config: ProfileConfig = toml::from_str(
             r#"
   [world]
   name = "example"
   description = "example world"
   seed = "example"
-  namespace = { default = "example" }
   cover_uri = "file://example_cover.png"
   website = "https://dojoengine.org"
   socials.x = "https://x.com/dojostarknet"
+
+  [namespace]
+  default = "example"
           "#,
         )
         .unwrap();
         // TODO: we may want to store here the namespace and the seed. Check the
         // implementation to actually add those to the metadata table.
-        let world_metadata = project_to_world_metadata(project_metadata.world);
-        db.set_metadata(&RESOURCE, URI, BLOCK_TIMESTAMP);
+        let world_metadata: WorldMetadata = profile_config.world.into();
+        db.set_metadata(&RESOURCE, URI, BLOCK_TIMESTAMP).unwrap();
         db.update_metadata(&RESOURCE, URI, &world_metadata, &None, &Some(cover_img.to_string()))
-            .await
             .unwrap();
+        db.execute().await.unwrap();
 
         let result = run_graphql_query(&schema, QUERY).await;
         let value = result.get("metadatas").ok_or("metadatas not found").unwrap().clone();
@@ -97,10 +113,19 @@ mod tests {
 
     #[sqlx::test(migrations = "../migrations")]
     async fn test_empty_content(pool: SqlitePool) {
-        let mut db = Sql::new(pool.clone(), Felt::ZERO, Felt::ZERO).await.unwrap();
+        let (shutdown_tx, _) = broadcast::channel(1);
+        let (mut executor, sender) =
+            Executor::new(pool.clone(), shutdown_tx.clone()).await.unwrap();
+        tokio::spawn(async move {
+            executor.run().await.unwrap();
+        });
+        let mut db =
+            Sql::new(pool.clone(), sender, &HashMap::from([(Felt::ZERO, ContractType::WORLD)]))
+                .await
+                .unwrap();
         let schema = build_schema(&pool).await.unwrap();
 
-        db.set_metadata(&RESOURCE, URI, BLOCK_TIMESTAMP);
+        db.set_metadata(&RESOURCE, URI, BLOCK_TIMESTAMP).unwrap();
         db.execute().await.unwrap();
 
         let result = run_graphql_query(&schema, QUERY).await;

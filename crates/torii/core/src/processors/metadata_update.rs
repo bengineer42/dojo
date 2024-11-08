@@ -4,11 +4,13 @@ use anyhow::{Error, Result};
 use async_trait::async_trait;
 use base64::engine::general_purpose;
 use base64::Engine as _;
-use cainome::cairo_serde::{ByteArray, CairoSerde};
+use cainome::cairo_serde::Zeroable;
+use dojo_world::config::WorldMetadata;
+use dojo_world::contracts::abigen::world::Event as WorldEvent;
 use dojo_world::contracts::world::WorldContractReader;
-use dojo_world::metadata::{Uri, WorldMetadata};
+use dojo_world::uri::Uri;
 use reqwest::Client;
-use starknet::core::types::{Event, Felt, TransactionReceiptWithBlockInfo};
+use starknet::core::types::{Event, Felt};
 use starknet::providers::Provider;
 use tokio_util::bytes::Bytes;
 use tracing::{error, info};
@@ -33,16 +35,7 @@ where
         "MetadataUpdate".to_string()
     }
 
-    fn validate(&self, event: &Event) -> bool {
-        if event.keys.len() > 1 {
-            info!(
-                target: LOG_TARGET,
-                event_key = %<MetadataUpdateProcessor as EventProcessor<P>>::event_key(self),
-                invalid_keys = %<MetadataUpdateProcessor as EventProcessor<P>>::event_keys_as_string(self, event),
-                "Invalid event keys."
-            );
-            return false;
-        }
+    fn validate(&self, _event: &Event) -> bool {
         true
     }
 
@@ -52,25 +45,41 @@ where
         db: &mut Sql,
         _block_number: u64,
         block_timestamp: u64,
-        _transaction_receipt: &TransactionReceiptWithBlockInfo,
         _event_id: &str,
         event: &Event,
     ) -> Result<(), Error> {
-        let resource = &event.data[0];
-        let uri_str = ByteArray::cairo_deserialize(&event.data, 1)?.to_string()?;
+        // Torii version is coupled to the world version, so we can expect the event to be well
+        // formed.
+        let event = match WorldEvent::try_from(event).unwrap_or_else(|_| {
+            panic!(
+                "Expected {} event to be well formed.",
+                <MetadataUpdateProcessor as EventProcessor<P>>::event_key(self)
+            )
+        }) {
+            WorldEvent::MetadataUpdate(e) => e,
+            _ => {
+                unreachable!()
+            }
+        };
+
+        // We know it's a valid Byte Array since it's coming from the world.
+        let uri_str = event.uri.to_string().unwrap();
         info!(
             target: LOG_TARGET,
-            resource = %format!("{:#x}", resource),
+            resource = %format!("{:#x}", event.resource),
             uri = %uri_str,
             "Resource metadata set."
         );
-        db.set_metadata(resource, &uri_str, block_timestamp);
+        db.set_metadata(&event.resource, &uri_str, block_timestamp)?;
 
         let db = db.clone();
-        let resource = *resource;
-        tokio::spawn(async move {
-            try_retrieve(db, resource, uri_str).await;
-        });
+
+        // Only retrieve metadata for the World contract.
+        if event.resource.is_zero() {
+            tokio::spawn(async move {
+                try_retrieve(db, event.resource, uri_str).await;
+            });
+        }
 
         Ok(())
     }
@@ -79,9 +88,7 @@ where
 async fn try_retrieve(mut db: Sql, resource: Felt, uri_str: String) {
     match metadata(uri_str.clone()).await {
         Ok((metadata, icon_img, cover_img)) => {
-            db.update_metadata(&resource, &uri_str, &metadata, &icon_img, &cover_img)
-                .await
-                .unwrap();
+            db.update_metadata(&resource, &uri_str, &metadata, &icon_img, &cover_img).unwrap();
             info!(
                 target: LOG_TARGET,
                 resource = %format!("{:#x}", resource),

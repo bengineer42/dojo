@@ -6,8 +6,6 @@ import "schema.proto";
 message WorldMetadata {
     // The hex-encoded address of the world.
     string world_address = 1;
-    // The hex-encoded class hash of the world.
-    string world_class_hash = 2;
     // A list of metadata for all registered components in the world. 
     repeated ModelMetadata models = 5;
 }
@@ -75,6 +73,7 @@ message Query {
     Clause clause = 1;
     uint32 limit = 2;
     uint32 offset = 3;
+    bool dont_include_hashed_keys = 4;
 }
 
 message EventQuery {
@@ -114,11 +113,18 @@ message HashedKeysClause {
     repeated bytes hashed_keys = 1;
 }
 
+message MemberValue {
+    oneof value_type {
+        Primitive primitive = 1;
+        string string = 2;
+    }
+}
+
 message MemberClause {
     string model = 2;
     string member = 3;
     ComparisonOperator operator = 4;
-    Value value = 5;
+    MemberValue value = 5;
 }
 
 message CompositeClause {

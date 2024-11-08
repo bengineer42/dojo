@@ -4,6 +4,7 @@ use std::io;
 use libp2p::gossipsub::{PublishError, SubscriptionError};
 #[cfg(not(target_arch = "wasm32"))]
 use libp2p::noise;
+use starknet::providers::ProviderError;
 use thiserror::Error;
 
 #[derive(Error, Debug)]
@@ -42,4 +43,10 @@ pub enum Error {
 
     #[error("Invalid message provided: {0}")]
     InvalidMessageError(String),
+
+    #[error("Invalid type provided: {0}")]
+    InvalidTypeError(String),
+
+    #[error(transparent)]
+    ProviderError(#[from] ProviderError),
 }

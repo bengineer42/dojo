@@ -18,11 +18,11 @@ use katana_primitives::conversion::rpc::{
     compiled_class_hash_from_flattened_sierra_class, flattened_sierra_to_compiled_class,
     legacy_rpc_to_compiled_class,
 };
-use katana_primitives::FieldElement;
+use katana_primitives::Felt;
 use parking_lot::Mutex;
 use starknet::core::types::{BlockId, ContractClass as RpcContractClass, StarknetError};
 use starknet::providers::{Provider, ProviderError as StarknetProviderError};
-use tracing::{error, info, trace};
+use tracing::{error, trace};
 
 use crate::error::ProviderError;
 use crate::providers::in_memory::cache::CacheStateDb;
@@ -152,7 +152,7 @@ where
             })
             .map_err(BackendError::BackendThreadInit)?;
 
-        info!(target: LOG_TARGET, "Forking backend started.");
+        trace!(target: LOG_TARGET, "Forking backend started.");
 
         Ok(handle)
     }
@@ -186,7 +186,7 @@ where
             BackendRequest::Nonce(Request { payload, sender }) => {
                 let fut = Box::pin(async move {
                     let res = provider
-                        .get_nonce(block, FieldElement::from(payload))
+                        .get_nonce(block, Felt::from(payload))
                         .await
                         .map_err(BackendError::StarknetProvider);
 
@@ -199,7 +199,7 @@ where
             BackendRequest::Storage(Request { payload: (addr, key), sender }) => {
                 let fut = Box::pin(async move {
                     let res = provider
-                        .get_storage_at(FieldElement::from(addr), key, block)
+                        .get_storage_at(Felt::from(addr), key, block)
                         .await
                         .map_err(BackendError::StarknetProvider);
 
@@ -212,7 +212,7 @@ where
             BackendRequest::ClassHash(Request { payload, sender }) => {
                 let fut = Box::pin(async move {
                     let res = provider
-                        .get_class_hash_at(block, FieldElement::from(payload))
+                        .get_class_hash_at(block, Felt::from(payload))
                         .await
                         .map_err(BackendError::StarknetProvider);
 

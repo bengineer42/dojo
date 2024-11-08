@@ -1,25 +1,23 @@
 use std::str::FromStr;
 
 use anyhow::{Context, Result};
+use dojo_utils::{TransactionExt, TransactionWaiter, TxnConfig};
 use dojo_world::contracts::model::ModelError;
 use dojo_world::contracts::naming::{
     compute_bytearray_hash, compute_selector_from_tag, ensure_namespace,
 };
 use dojo_world::contracts::world::WorldContract;
 use dojo_world::contracts::WorldContractReader;
-use dojo_world::migration::TxnConfig;
-use dojo_world::utils::TransactionExt;
-use scarb_ui::Ui;
 use starknet::accounts::{Account, ConnectedAccount};
 use starknet::core::types::{BlockId, BlockTag, Felt};
-
-use crate::utils;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum ResourceType {
     Contract(String),
     Namespace(String),
     Model(String),
+    // this can be a selector for any other resource type
+    Selector(Felt),
 }
 
 impl FromStr for ResourceType {
@@ -35,10 +33,14 @@ impl FromStr for ResourceType {
             Some(("namespace", name)) | Some(("ns", name)) => {
                 ResourceType::Namespace(name.to_string())
             }
-            _ => anyhow::bail!(
+            Some(("selector", name)) | Some(("s", name)) => {
+                ResourceType::Selector(Felt::from_str(name)?)
+            }
+            _ => anyhow::bail!(format!(
                 "Resource is expected to be in the format `resource_type:resource_name`: `sozo \
-                 auth grant owner resource_type:resource_name,0x1234`"
-            ),
+                 auth grant owner resource_type:resource_name,0x1234`, Found: {}.",
+                s
+            )),
         };
         Ok(resource)
     }
@@ -101,9 +103,10 @@ impl FromStr for ResourceOwner {
 pub async fn grant_writer<'a, A>(
     ui: &'a Ui,
     world: &WorldContract<A>,
-    new_writers: Vec<ResourceWriter>,
-    txn_config: TxnConfig,
+    new_writers: &[ResourceWriter],
+    txn_config: &TxnConfig,
     default_namespace: &str,
+    #[cfg(feature = "walnut")] walnut_debugger: &Option<WalnutDebugger>,
 ) -> Result<()>
 where
     A: ConnectedAccount + Sync + Send,
@@ -115,7 +118,7 @@ where
         let resource_selector =
             get_resource_selector(ui, world, &new_writer.resource, default_namespace).await?;
         let contract_address =
-            utils::get_contract_address(world, new_writer.tag_or_address).await?;
+            utils::get_contract_address(world, &new_writer.tag_or_address).await?;
         calls.push(world.grant_writer_getcall(&resource_selector, &contract_address.into()));
     }
 
@@ -123,9 +126,11 @@ where
         let res = world
             .account
             .execute_v1(calls)
-            .send_with_cfg(&txn_config)
+            .send_with_cfg(txn_config)
             .await
             .with_context(|| "Failed to send transaction")?;
+
+        TransactionWaiter::new(res.transaction_hash, &world.provider()).await?;
 
         utils::handle_transaction_result(
             ui,
@@ -133,6 +138,8 @@ where
             res,
             txn_config.wait,
             txn_config.receipt,
+            #[cfg(feature = "walnut")]
+            walnut_debugger,
         )
         .await?;
     }
@@ -143,9 +150,10 @@ where
 pub async fn grant_owner<A>(
     ui: &Ui,
     world: &WorldContract<A>,
-    new_owners: Vec<ResourceOwner>,
-    txn_config: TxnConfig,
+    new_owners: &[ResourceOwner],
+    txn_config: &TxnConfig,
     default_namespace: &str,
+    #[cfg(feature = "walnut")] walnut_debugger: &Option<WalnutDebugger>,
 ) -> Result<()>
 where
     A: ConnectedAccount + Sync + Send + 'static,
@@ -161,9 +169,11 @@ where
     let res = world
         .account
         .execute_v1(calls)
-        .send_with_cfg(&txn_config)
+        .send_with_cfg(txn_config)
         .await
         .with_context(|| "Failed to send transaction")?;
+
+    TransactionWaiter::new(res.transaction_hash, &world.provider()).await?;
 
     utils::handle_transaction_result(
         ui,
@@ -171,6 +181,8 @@ where
         res,
         txn_config.wait,
         txn_config.receipt,
+        #[cfg(feature = "walnut")]
+        walnut_debugger,
     )
     .await?;
 
@@ -180,9 +192,10 @@ where
 pub async fn revoke_writer<A>(
     ui: &Ui,
     world: &WorldContract<A>,
-    new_writers: Vec<ResourceWriter>,
-    txn_config: TxnConfig,
+    new_writers: &[ResourceWriter],
+    txn_config: &TxnConfig,
     default_namespace: &str,
+    #[cfg(feature = "walnut")] walnut_debugger: &Option<WalnutDebugger>,
 ) -> Result<()>
 where
     A: ConnectedAccount + Sync + Send + 'static,
@@ -193,7 +206,7 @@ where
         let resource_selector =
             get_resource_selector(ui, world, &new_writer.resource, default_namespace).await?;
         let contract_address =
-            utils::get_contract_address(world, new_writer.tag_or_address).await?;
+            utils::get_contract_address(world, &new_writer.tag_or_address).await?;
         calls.push(world.revoke_writer_getcall(&resource_selector, &contract_address.into()));
     }
 
@@ -201,9 +214,11 @@ where
         let res = world
             .account
             .execute_v1(calls)
-            .send_with_cfg(&txn_config)
+            .send_with_cfg(txn_config)
             .await
             .with_context(|| "Failed to send transaction")?;
+
+        TransactionWaiter::new(res.transaction_hash, &world.provider()).await?;
 
         utils::handle_transaction_result(
             ui,
@@ -211,6 +226,8 @@ where
             res,
             txn_config.wait,
             txn_config.receipt,
+            #[cfg(feature = "walnut")]
+            walnut_debugger,
         )
         .await?;
     }
@@ -221,9 +238,10 @@ where
 pub async fn revoke_owner<A>(
     ui: &Ui,
     world: &WorldContract<A>,
-    new_owners: Vec<ResourceOwner>,
-    txn_config: TxnConfig,
+    new_owners: &[ResourceOwner],
+    txn_config: &TxnConfig,
     default_namespace: &str,
+    #[cfg(feature = "walnut")] walnut_debugger: &Option<WalnutDebugger>,
 ) -> Result<()>
 where
     A: ConnectedAccount + Sync + Send + 'static,
@@ -239,7 +257,7 @@ where
     let res = world
         .account
         .execute_v1(calls)
-        .send_with_cfg(&txn_config)
+        .send_with_cfg(txn_config)
         .await
         .with_context(|| "Failed to send transaction")?;
 
@@ -249,13 +267,15 @@ where
         res,
         txn_config.wait,
         txn_config.receipt,
+        #[cfg(feature = "walnut")]
+        walnut_debugger,
     )
     .await?;
 
     Ok(())
 }
 
-async fn get_resource_selector<A>(
+pub async fn get_resource_selector<A>(
     ui: &Ui,
     world: &WorldContract<A>,
     resource: &ResourceType,
@@ -275,7 +295,7 @@ where
             } else {
                 ensure_namespace(tag_or_address, default_namespace)
             };
-            utils::get_contract_address(world, tag_or_address).await?
+            utils::get_contract_address(world, &tag_or_address).await?
         }
         ResourceType::Model(tag_or_name) => {
             // TODO: Is some models have version 0 (using the name of the struct instead of the
@@ -286,7 +306,7 @@ where
             // be sure that the model exists
             match world_reader.model_reader_with_tag(&tag).await {
                 Err(ModelError::ModelNotFound) => {
-                    ui.print(format!("Unknown model '{}' => IGNORED", tag));
+                    //ui.print_sub(format!("Unknown model '{}' => IGNORED", tag));
                 }
                 Err(err) => {
                     return Err(err.into());
@@ -297,6 +317,7 @@ where
             compute_selector_from_tag(&tag)
         }
         ResourceType::Namespace(name) => compute_bytearray_hash(name),
+        ResourceType::Selector(selector) => *selector,
     };
 
     Ok(resource_selector)

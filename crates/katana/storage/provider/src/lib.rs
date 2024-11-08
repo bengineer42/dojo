@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::ops::{Range, RangeInclusive};
 
 use katana_db::models::block::StoredBlockBodyIndices;
@@ -12,12 +13,13 @@ use katana_primitives::receipt::Receipt;
 use katana_primitives::state::{StateUpdates, StateUpdatesWithDeclaredClasses};
 use katana_primitives::trace::TxExecInfo;
 use katana_primitives::transaction::{TxHash, TxNumber, TxWithHash};
-use katana_primitives::FieldElement;
+use katana_primitives::Felt;
 use traits::block::{BlockIdReader, BlockStatusProvider, BlockWriter};
 use traits::contract::{ContractClassProvider, ContractClassWriter};
 use traits::env::BlockEnvProvider;
 use traits::state::{StateRootProvider, StateWriter};
 use traits::transaction::{TransactionStatusProvider, TransactionTraceProvider};
+use traits::trie::{ClassTrieWriter, ContractTrieWriter};
 
 pub mod error;
 pub mod providers;
@@ -312,7 +314,7 @@ impl<Db> StateRootProvider for BlockchainProvider<Db>
 where
     Db: StateRootProvider,
 {
-    fn state_root(&self, block_id: BlockHashOrNumber) -> ProviderResult<Option<FieldElement>> {
+    fn state_root(&self, block_id: BlockHashOrNumber) -> ProviderResult<Option<Felt>> {
         self.provider.state_root(block_id)
     }
 }
@@ -378,5 +380,31 @@ where
 {
     fn block_env_at(&self, id: BlockHashOrNumber) -> ProviderResult<Option<BlockEnv>> {
         self.provider.block_env_at(id)
+    }
+}
+
+impl<Db> ClassTrieWriter for BlockchainProvider<Db>
+where
+    Db: ClassTrieWriter,
+{
+    fn insert_updates(
+        &self,
+        block_number: BlockNumber,
+        updates: &BTreeMap<ClassHash, CompiledClassHash>,
+    ) -> ProviderResult<Felt> {
+        self.provider.insert_updates(block_number, updates)
+    }
+}
+
+impl<Db> ContractTrieWriter for BlockchainProvider<Db>
+where
+    Db: ContractTrieWriter,
+{
+    fn insert_updates(
+        &self,
+        block_number: BlockNumber,
+        state_updates: &StateUpdates,
+    ) -> ProviderResult<Felt> {
+        self.provider.insert_updates(block_number, state_updates)
     }
 }

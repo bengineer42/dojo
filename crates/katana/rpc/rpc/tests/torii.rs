@@ -4,16 +4,16 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
-use dojo_test_utils::sequencer::{get_default_test_starknet_config, TestSequencer};
-use dojo_world::utils::TransactionWaiter;
+use dojo_test_utils::sequencer::{get_default_test_config, TestSequencer};
+use dojo_utils::TransactionWaiter;
 use jsonrpsee::http_client::HttpClientBuilder;
-use katana_core::sequencer::SequencerConfig;
+use katana_node::config::SequencingConfig;
 use katana_rpc_api::dev::DevApiClient;
 use katana_rpc_api::starknet::StarknetApiClient;
 use katana_rpc_api::torii::ToriiApiClient;
 use katana_rpc_types::transaction::{TransactionsPage, TransactionsPageCursor};
-use starknet::accounts::{Account, Call, ConnectedAccount};
-use starknet::core::types::{Felt, TransactionStatus};
+use starknet::accounts::{Account, ConnectedAccount};
+use starknet::core::types::{Call, Felt, TransactionStatus};
 use starknet::core::utils::get_selector_from_name;
 use tokio::time::sleep;
 
@@ -25,11 +25,9 @@ pub const ENOUGH_GAS: &str = "0x100000000000000000";
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_get_transactions() {
-    let sequencer = TestSequencer::start(
-        SequencerConfig { no_mining: true, ..Default::default() },
-        get_default_test_starknet_config(),
-    )
-    .await;
+    // setup test sequencer with the given configuration
+    let sequencing_config = SequencingConfig { no_mining: true, ..Default::default() };
+    let sequencer = TestSequencer::start(get_default_test_config(sequencing_config)).await;
 
     let client = HttpClientBuilder::default().build(sequencer.url()).unwrap();
 
@@ -121,6 +119,7 @@ async fn test_get_transactions() {
     // Test only returns first 100 txns from pending block
     for i in 0..101 {
         let deploy_call = build_deploy_contract_call(declare_res.class_hash, (i + 2_u32).into());
+        // settings the max fee manually will skip fee estimation
         let deploy_txn = account.execute_v1(vec![deploy_call]).nonce(nonce).max_fee(max_fee);
         let res = deploy_txn.send().await.unwrap();
         nonce += Felt::ONE;
@@ -181,11 +180,8 @@ async fn test_get_transactions() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_get_transactions_with_instant_mining() {
-    let sequencer = TestSequencer::start(
-        SequencerConfig { no_mining: false, ..Default::default() },
-        get_default_test_starknet_config(),
-    )
-    .await;
+    let sequencing_config = SequencingConfig::default();
+    let sequencer = TestSequencer::start(get_default_test_config(sequencing_config)).await;
 
     let client = HttpClientBuilder::default().build(sequencer.url()).unwrap();
 

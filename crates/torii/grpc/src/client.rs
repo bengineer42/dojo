@@ -4,18 +4,26 @@ use std::num::ParseIntError;
 use futures_util::stream::MapOk;
 use futures_util::{Stream, StreamExt, TryStreamExt};
 use starknet::core::types::{Felt, FromStrError, StateDiff, StateUpdate};
+use tonic::codec::CompressionEncoding;
+#[cfg(not(target_arch = "wasm32"))]
+use tonic::transport::Endpoint;
 
 use crate::proto::world::{
-    world_client, MetadataRequest, RetrieveEntitiesRequest, RetrieveEntitiesResponse,
+    world_client, RetrieveEntitiesRequest, RetrieveEntitiesResponse, RetrieveEventMessagesRequest,
     RetrieveEventsRequest, RetrieveEventsResponse, SubscribeEntitiesRequest,
-    SubscribeEntityResponse, SubscribeEventsRequest, SubscribeEventsResponse,
+    SubscribeEntityResponse, SubscribeEventMessagesRequest, SubscribeEventsRequest,
+    SubscribeEventsResponse, SubscribeIndexerRequest, SubscribeIndexerResponse,
     SubscribeModelsRequest, SubscribeModelsResponse, UpdateEntitiesSubscriptionRequest,
+    UpdateEventMessagesSubscriptionRequest, WorldMetadataRequest,
 };
-use crate::types::schema::{self, Entity, SchemaError};
-use crate::types::{EntityKeysClause, Event, EventQuery, KeysClause, ModelKeysClause, Query};
+use crate::types::schema::{Entity, SchemaError};
+use crate::types::{EntityKeysClause, Event, EventQuery, IndexerUpdate, ModelKeysClause, Query};
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
+    #[cfg(not(target_arch = "wasm32"))]
+    #[error("Endpoint error: {0}")]
+    Endpoint(String),
     #[error(transparent)]
     Grpc(tonic::Status),
     #[error(transparent)]
@@ -26,7 +34,7 @@ pub enum Error {
     #[error(transparent)]
     Transport(tonic::transport::Error),
     #[error(transparent)]
-    Schema(#[from] schema::SchemaError),
+    Schema(#[from] SchemaError),
 }
 
 #[derive(Debug)]
@@ -41,14 +49,15 @@ pub struct WorldClient {
 
 impl WorldClient {
     #[cfg(not(target_arch = "wasm32"))]
-    pub async fn new<D>(dst: D, _world_address: Felt) -> Result<Self, Error>
-    where
-        D: TryInto<tonic::transport::Endpoint>,
-        D::Error: Into<Box<(dyn std::error::Error + Send + Sync + 'static)>>,
-    {
+    pub async fn new(dst: String, world_address: Felt) -> Result<Self, Error> {
+        let endpoint =
+            Endpoint::from_shared(dst.clone()).map_err(|e| Error::Endpoint(e.to_string()))?;
+        let channel = endpoint.connect().await.map_err(Error::Transport)?;
         Ok(Self {
-            _world_address,
-            inner: world_client::WorldClient::connect(dst).await.map_err(Error::Transport)?,
+            _world_address: world_address,
+            inner: world_client::WorldClient::with_origin(channel, endpoint.uri().clone())
+                .accept_compressed(CompressionEncoding::Gzip)
+                .send_compressed(CompressionEncoding::Gzip),
         })
     }
 
@@ -57,18 +66,22 @@ impl WorldClient {
     pub async fn new(endpoint: String, _world_address: Felt) -> Result<Self, Error> {
         Ok(Self {
             _world_address,
-            inner: world_client::WorldClient::new(tonic_web_wasm_client::Client::new(endpoint)),
+            inner: world_client::WorldClient::new(tonic_web_wasm_client::Client::new(endpoint))
+                .accept_compressed(CompressionEncoding::Gzip)
+                .send_compressed(CompressionEncoding::Gzip),
         })
     }
 
     /// Retrieve the metadata of the World.
     pub async fn metadata(&mut self) -> Result<dojo_types::WorldMetadata, Error> {
         self.inner
-            .world_metadata(MetadataRequest {})
+            .world_metadata(WorldMetadataRequest {})
             .await
             .map_err(Error::Grpc)
             .and_then(|res| {
-                res.into_inner().metadata.ok_or(Error::Schema(SchemaError::MissingExpectedData))
+                res.into_inner()
+                    .metadata
+                    .ok_or(Error::Schema(SchemaError::MissingExpectedData("metadata".to_string())))
             })
             .and_then(|metadata| metadata.try_into().map_err(Error::ParseStr))
     }
@@ -84,8 +97,9 @@ impl WorldClient {
     pub async fn retrieve_event_messages(
         &mut self,
         query: Query,
+        historical: bool,
     ) -> Result<RetrieveEntitiesResponse, Error> {
-        let request = RetrieveEntitiesRequest { query: Some(query.into()) };
+        let request = RetrieveEventMessagesRequest { query: Some(query.into()), historical };
         self.inner
             .retrieve_event_messages(request)
             .await
@@ -99,6 +113,22 @@ impl WorldClient {
     ) -> Result<RetrieveEventsResponse, Error> {
         let request = RetrieveEventsRequest { query: Some(query.into()) };
         self.inner.retrieve_events(request).await.map_err(Error::Grpc).map(|res| res.into_inner())
+    }
+
+    /// Subscribe to indexer updates.
+    pub async fn subscribe_indexer(
+        &mut self,
+        contract_address: Felt,
+    ) -> Result<IndexerUpdateStreaming, Error> {
+        let request =
+            SubscribeIndexerRequest { contract_address: contract_address.to_bytes_be().to_vec() };
+        let stream = self
+            .inner
+            .subscribe_indexer(request)
+            .await
+            .map_err(Error::Grpc)
+            .map(|res| res.into_inner())?;
+        Ok(IndexerUpdateStreaming(stream.map_ok(Box::new(|res| res.into()))))
     }
 
     /// Subscribe to entities updates of a World.
@@ -144,11 +174,12 @@ impl WorldClient {
     pub async fn subscribe_event_messages(
         &mut self,
         clauses: Vec<EntityKeysClause>,
+        historical: bool,
     ) -> Result<EntityUpdateStreaming, Error> {
         let clauses = clauses.into_iter().map(|c| c.into()).collect();
         let stream = self
             .inner
-            .subscribe_event_messages(SubscribeEntitiesRequest { clauses })
+            .subscribe_event_messages(SubscribeEventMessagesRequest { clauses, historical })
             .await
             .map_err(Error::Grpc)
             .map(|res| res.into_inner())?;
@@ -166,12 +197,14 @@ impl WorldClient {
         &mut self,
         subscription_id: u64,
         clauses: Vec<EntityKeysClause>,
+        historical: bool,
     ) -> Result<(), Error> {
         let clauses = clauses.into_iter().map(|c| c.into()).collect();
         self.inner
-            .update_event_messages_subscription(UpdateEntitiesSubscriptionRequest {
+            .update_event_messages_subscription(UpdateEventMessagesSubscriptionRequest {
                 subscription_id,
                 clauses,
+                historical,
             })
             .await
             .map_err(Error::Grpc)
@@ -181,9 +214,9 @@ impl WorldClient {
     /// Subscribe to the events of a World.
     pub async fn subscribe_events(
         &mut self,
-        keys: Option<KeysClause>,
+        keys: Vec<EntityKeysClause>,
     ) -> Result<EventUpdateStreaming, Error> {
-        let keys = keys.map(|c| c.into());
+        let keys = keys.into_iter().map(|c| c.into()).collect();
 
         let stream = self
             .inner
@@ -268,6 +301,24 @@ pub struct EventUpdateStreaming(EventMappedStream);
 
 impl Stream for EventUpdateStreaming {
     type Item = <EventMappedStream as Stream>::Item;
+    fn poll_next(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Option<Self::Item>> {
+        self.0.poll_next_unpin(cx)
+    }
+}
+
+type IndexerMappedStream = MapOk<
+    tonic::Streaming<SubscribeIndexerResponse>,
+    Box<dyn Fn(SubscribeIndexerResponse) -> IndexerUpdate + Send>,
+>;
+
+#[derive(Debug)]
+pub struct IndexerUpdateStreaming(IndexerMappedStream);
+
+impl Stream for IndexerUpdateStreaming {
+    type Item = <IndexerMappedStream as Stream>::Item;
     fn poll_next(
         mut self: std::pin::Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,

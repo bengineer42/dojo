@@ -1,6 +1,5 @@
 #![allow(dead_code)]
 
-use std::collections::HashMap;
 use std::str::FromStr;
 use std::sync::Arc;
 
@@ -17,7 +16,7 @@ use katana_primitives::transaction::L1HandlerTx;
 use katana_primitives::utils::transaction::{
     compute_l1_to_l2_message_hash, compute_l2_to_l1_message_hash,
 };
-use katana_primitives::FieldElement;
+use katana_primitives::Felt;
 use starknet::core::types::EthAddress;
 use tracing::{debug, trace, warn};
 
@@ -72,14 +71,10 @@ impl EthereumMessaging {
     ///
     /// * `from_block` - The first block of which logs must be fetched.
     /// * `to_block` - The last block of which logs must be fetched.
-    pub async fn fetch_logs(
-        &self,
-        from_block: u64,
-        to_block: u64,
-    ) -> MessengerResult<HashMap<u64, Vec<Log>>> {
+    pub async fn fetch_logs(&self, from_block: u64, to_block: u64) -> MessengerResult<Vec<Log>> {
         trace!(target: LOG_TARGET, from_block = ?from_block, to_block = ?to_block, "Fetching logs.");
 
-        let mut block_to_logs: HashMap<u64, Vec<Log>> = HashMap::new();
+        let mut logs = vec![];
 
         let filters = Filter {
             block_option: FilterBlockOption::Range {
@@ -107,15 +102,11 @@ impl EthereumMessaging {
             .await?
             .into_iter()
             .filter(|log| log.block_number.is_some())
-            .map(|log| (log.block_number.unwrap(), log))
-            .for_each(|(block_num, log)| {
-                block_to_logs
-                    .entry(block_num)
-                    .and_modify(|v| v.push(log.clone()))
-                    .or_insert(vec![log]);
+            .for_each(|log| {
+                logs.push(log);
             });
 
-        Ok(block_to_logs)
+        Ok(logs)
     }
 }
 
@@ -143,22 +134,17 @@ impl Messenger for EthereumMessaging {
         let mut l1_handler_txs = vec![];
 
         trace!(target: LOG_TARGET, from_block, to_block, "Fetching logs from {from_block} to {to_block}.");
-        self.fetch_logs(from_block, to_block).await?.into_iter().for_each(
-            |(block_number, block_logs)| {
-                debug!(
-                    target: LOG_TARGET,
-                    block_number = %block_number,
-                    logs_found = %block_logs.len(),
-                    "Converting logs into L1HandlerTx.",
-                );
+        self.fetch_logs(from_block, to_block).await?.iter().for_each(|l| {
+            debug!(
+                target: LOG_TARGET,
+                log = ?l,
+                "Converting log into L1HandlerTx.",
+            );
 
-                block_logs.into_iter().for_each(|log| {
-                    if let Ok(tx) = l1_handler_tx_from_log(log, chain_id) {
-                        l1_handler_txs.push(tx)
-                    }
-                })
-            },
-        );
+            if let Ok(tx) = l1_handler_tx_from_log(l.clone(), chain_id) {
+                l1_handler_txs.push(tx)
+            }
+        });
 
         Ok((to_block, l1_handler_txs))
     }
@@ -222,7 +208,7 @@ fn l1_handler_tx_from_log(log: Log, chain_id: ChainId) -> MessengerResult<L1Hand
 
     // In an l1_handler transaction, the first element of the calldata is always the Ethereum
     // address of the sender (msg.sender). https://docs.starknet.io/documentation/architecture_and_concepts/Network_Architecture/messaging-mechanism/#l1-l2-messages
-    let mut calldata = vec![FieldElement::from(from_address)];
+    let mut calldata = vec![Felt::from(from_address)];
     calldata.extend(payload.clone());
 
     Ok(L1HandlerTx {
@@ -232,7 +218,7 @@ fn l1_handler_tx_from_log(log: Log, chain_id: ChainId) -> MessengerResult<L1Hand
         paid_fee_on_l1,
         nonce: nonce.into(),
         entry_point_selector,
-        version: FieldElement::ZERO,
+        version: Felt::ZERO,
         contract_address: contract_address.into(),
     })
 }
@@ -252,8 +238,8 @@ fn parse_messages(messages: &[MessageToL1]) -> Vec<U256> {
         .collect()
 }
 
-fn felt_from_u256(v: U256) -> FieldElement {
-    FieldElement::from_str(format!("{:#064x}", v).as_str()).unwrap()
+fn felt_from_u256(v: U256) -> Felt {
+    Felt::from_str(format!("{:#064x}", v).as_str()).unwrap()
 }
 
 #[cfg(test)]
@@ -271,7 +257,7 @@ mod tests {
         let from_address = felt!("0xbe3C44c09bc1a3566F3e1CA12e5AbA0fA4Ca72Be");
         let to_address = felt!("0x39dc79e64f4bb3289240f88e0bae7d21735bef0d1a51b2bf3c4730cb16983e1");
         let selector = felt!("0x2f15cff7b0eed8b9beb162696cf4e3e0e35fa7032af69cd1b7d2ac67a13f40f");
-        let payload = vec![FieldElement::ONE, FieldElement::TWO];
+        let payload = vec![Felt::ONE, Felt::TWO];
         let nonce = 783082_u64;
         let fee = 30000_u128;
 
@@ -317,8 +303,8 @@ mod tests {
             chain_id,
             message_hash,
             paid_fee_on_l1: fee,
-            version: FieldElement::ZERO,
-            nonce: FieldElement::from(nonce),
+            version: Felt::ZERO,
+            nonce: Felt::from(nonce),
             contract_address: to_address.into(),
             entry_point_selector: selector,
         };
@@ -333,7 +319,7 @@ mod tests {
     fn parse_msg_to_l1() {
         let from_address = selector!("from_address");
         let to_address = selector!("to_address");
-        let payload = vec![FieldElement::ONE, FieldElement::TWO];
+        let payload = vec![Felt::ONE, Felt::TWO];
 
         let messages = vec![MessageToL1 { from_address: from_address.into(), to_address, payload }];
 

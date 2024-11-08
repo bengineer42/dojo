@@ -1,12 +1,15 @@
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use clap::Args;
-use dojo_world::contracts::naming::ensure_namespace;
-use dojo_world::metadata::get_default_namespace_from_ws;
+use dojo_utils::{Invoker, TxnConfig};
+use dojo_world::config::calldata_decoder;
 use scarb::core::Config;
-use sozo_ops::execute;
+use sozo_ops::resource_descriptor::ResourceDescriptor;
+use sozo_scarbext::WorkspaceExt;
+use sozo_walnut::WalnutDebugger;
+use starknet::core::types::Call;
+use starknet::core::utils as snutils;
 use tracing::trace;
 
-use super::calldata_decoder;
 use super::options::account::AccountOptions;
 use super::options::starknet::StarknetOptions;
 use super::options::transaction::TransactionOptions;
@@ -19,7 +22,7 @@ pub struct ExecuteArgs {
     #[arg(
         help = "The address or the tag (ex: dojo_examples:actions) of the contract to be executed."
     )]
-    pub tag_or_address: String,
+    pub tag_or_address: ResourceDescriptor,
 
     #[arg(help = "The name of the entrypoint to be executed.")]
     pub entrypoint: String,
@@ -34,6 +37,11 @@ pub struct ExecuteArgs {
                   - int: A signed integer.
                   - no prefix: A cairo felt or any type that fit into one felt.")]
     pub calldata: Option<String>,
+
+    #[arg(long)]
+    #[arg(help = "If true, sozo will compute the diff of the world from the chain to translate \
+                  tags to addresses.")]
+    pub diff: bool,
 
     #[command(flatten)]
     pub starknet: StarknetOptions,
@@ -51,30 +59,54 @@ pub struct ExecuteArgs {
 impl ExecuteArgs {
     pub fn run(self, config: &Config) -> Result<()> {
         trace!(args = ?self);
-        let env_metadata = utils::load_metadata_from_config(config)?;
 
-        let tag_or_address = if utils::is_address(&self.tag_or_address) {
-            self.tag_or_address
-        } else {
-            let ws = scarb::ops::read_workspace(config.manifest_path(), config)?;
-            let default_namespace = get_default_namespace_from_ws(&ws)?;
-            ensure_namespace(&self.tag_or_address, &default_namespace)
-        };
+        let ws = scarb::ops::read_workspace(config.manifest_path(), config)?;
+
+        let profile_config = ws.load_profile_config()?;
+
+        let descriptor = self.tag_or_address.ensure_namespace(&profile_config.namespace.default);
+
+        #[cfg(feature = "walnut")]
+        let _walnut_debugger = WalnutDebugger::new_from_flag(
+            self.transaction.walnut,
+            self.starknet.url(profile_config.env.as_ref())?,
+        );
+
+        let txn_config: TxnConfig = self.transaction.try_into()?;
 
         config.tokio_handle().block_on(async {
-            let world = utils::world_from_env_metadata(
-                self.world,
-                self.account,
-                self.starknet,
-                &env_metadata,
-                config,
-            )
-            .await?;
+            let (contract_address, contracts) = match &descriptor {
+                ResourceDescriptor::Address(address) => (Some(*address), Default::default()),
+                ResourceDescriptor::Tag(tag) => {
+                    let contracts = utils::contracts_from_manifest_or_diff(
+                        self.account.clone(),
+                        self.starknet.clone(),
+                        self.world,
+                        &ws,
+                        self.diff,
+                    )
+                    .await?;
 
-            let tx_config = self.transaction.into();
+                    (contracts.get(tag).map(|c| c.address), contracts)
+                }
+                ResourceDescriptor::Name(_) => {
+                    unimplemented!("Expected to be a resolved tag with default namespace.")
+                }
+            };
+
+            let contract_address = contract_address.ok_or_else(|| {
+                let mut message = format!("Contract {descriptor} not found in the manifest.");
+                if self.diff {
+                    message.push_str(
+                        " Run the command again with `--diff` to force the fetch of data from the \
+                         chain.",
+                    );
+                }
+                anyhow!(message)
+            })?;
 
             trace!(
-                contract=?tag_or_address,
+                contract=?descriptor,
                 entrypoint=self.entrypoint,
                 calldata=?self.calldata,
                 "Executing Execute command."
@@ -86,15 +118,25 @@ impl ExecuteArgs {
                 vec![]
             };
 
-            execute::execute(
-                &config.ui(),
-                tag_or_address,
-                self.entrypoint,
+            let call = Call {
                 calldata,
-                &world,
-                &tx_config,
-            )
-            .await
+                to: contract_address,
+                selector: snutils::get_selector_from_name(&self.entrypoint)?,
+            };
+
+            let (provider, _) = self.starknet.provider(profile_config.env.as_ref())?;
+
+            let account = self
+                .account
+                .account(provider, profile_config.env.as_ref(), &self.starknet, &contracts)
+                .await?;
+
+            let invoker = Invoker::new(&account, txn_config);
+            // TODO: add walnut back, perhaps at the invoker level.
+            let tx_result = invoker.invoke(call).await?;
+
+            println!("{}", tx_result);
+            Ok(())
         })
     }
 }

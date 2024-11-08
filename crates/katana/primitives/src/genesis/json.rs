@@ -1,7 +1,7 @@
 //! JSON representation of the genesis configuration. Used to deserialize the genesis configuration
 //! from a JSON file.
 
-use std::collections::{hash_map, BTreeMap, HashMap};
+use std::collections::{btree_map, hash_map, BTreeMap, HashMap};
 use std::fs::File;
 use std::io::{
     BufReader, {self},
@@ -26,24 +26,19 @@ use super::allocation::{
 };
 #[cfg(feature = "slot")]
 use super::constant::{
-    CONTROLLER_ACCOUNT_CONTRACT, CONTROLLER_ACCOUNT_CONTRACT_CASM,
-    CONTROLLER_ACCOUNT_CONTRACT_CLASS_HASH,
+    CONTROLLER_ACCOUNT_CLASS, CONTROLLER_ACCOUNT_CLASS_CASM, CONTROLLER_CLASS_HASH,
 };
 use super::constant::{
-    DEFAULT_FEE_TOKEN_ADDRESS, DEFAULT_LEGACY_ERC20_CONTRACT_CASM,
-    DEFAULT_LEGACY_ERC20_CONTRACT_CLASS_HASH, DEFAULT_LEGACY_ERC20_CONTRACT_COMPILED_CLASS_HASH,
-    DEFAULT_LEGACY_UDC_CASM, DEFAULT_LEGACY_UDC_CLASS_HASH, DEFAULT_LEGACY_UDC_COMPILED_CLASS_HASH,
-    DEFAULT_OZ_ACCOUNT_CONTRACT, DEFAULT_OZ_ACCOUNT_CONTRACT_CASM,
-    DEFAULT_OZ_ACCOUNT_CONTRACT_CLASS_HASH, DEFAULT_OZ_ACCOUNT_CONTRACT_COMPILED_CLASS_HASH,
-    DEFAULT_UDC_ADDRESS,
+    DEFAULT_ACCOUNT_CLASS, DEFAULT_ACCOUNT_CLASS_CASM, DEFAULT_ACCOUNT_CLASS_HASH,
+    DEFAULT_ACCOUNT_COMPILED_CLASS_HASH,
 };
-use super::{FeeTokenConfig, Genesis, GenesisAllocation, UniversalDeployerConfig};
+use super::{Genesis, GenesisAllocation};
 use crate::block::{BlockHash, BlockNumber, GasPrices};
 use crate::class::{ClassHash, CompiledClass, SierraClass};
 use crate::contract::{ContractAddress, StorageKey, StorageValue};
 use crate::genesis::GenesisClass;
 use crate::utils::class::{parse_compiled_class_v1, parse_deprecated_compiled_class};
-use crate::FieldElement;
+use crate::Felt;
 
 type Object = Map<String, Value>;
 
@@ -150,52 +145,26 @@ impl<'de> Deserialize<'de> for ClassNameOrHash {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
-#[serde(rename_all = "camelCase")]
-pub struct FeeTokenConfigJson {
-    pub name: String,
-    pub symbol: String,
-    pub address: Option<ContractAddress>,
-    pub decimals: u8,
-    /// The class hash of the fee token contract.
-    /// If not provided, the default fee token class is used.
-    pub class: Option<ClassNameOrHash>,
-    /// To initialize the fee token contract storage
-    pub storage: Option<HashMap<StorageKey, StorageValue>>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct UniversalDeployerConfigJson {
-    /// The address of the universal deployer contract.
-    /// If not provided, the default UD address is used.
-    pub address: Option<ContractAddress>,
-    /// The class hash of the universal deployer contract.
-    /// If not provided, the default UD class is used.
-    pub class: Option<ClassNameOrHash>,
-    /// To initialize the UD contract storage
-    pub storage: Option<HashMap<StorageKey, StorageValue>>,
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct GenesisContractJson {
     pub class: Option<ClassNameOrHash>,
     pub balance: Option<U256>,
-    pub nonce: Option<FieldElement>,
-    pub storage: Option<HashMap<StorageKey, StorageValue>>,
+    pub nonce: Option<Felt>,
+    pub storage: Option<BTreeMap<StorageKey, StorageValue>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct GenesisAccountJson {
     /// The public key of the account.
-    pub public_key: FieldElement,
+    pub public_key: Felt,
     pub balance: Option<U256>,
-    pub nonce: Option<FieldElement>,
+    pub nonce: Option<Felt>,
     /// The class hash of the account contract. If not provided, the default account class is used.
     pub class: Option<ClassNameOrHash>,
-    pub storage: Option<HashMap<StorageKey, StorageValue>>,
-    pub private_key: Option<FieldElement>,
+    pub storage: Option<BTreeMap<StorageKey, StorageValue>>,
+    pub private_key: Option<Felt>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -257,19 +226,17 @@ pub enum GenesisJsonError {
 #[serde(rename_all = "camelCase")]
 pub struct GenesisJson {
     pub parent_hash: BlockHash,
-    pub state_root: FieldElement,
+    pub state_root: Felt,
     pub number: BlockNumber,
     pub timestamp: u64,
     pub sequencer_address: ContractAddress,
     pub gas_prices: GasPrices,
     #[serde(default)]
     pub classes: Vec<GenesisClassJson>,
-    pub fee_token: FeeTokenConfigJson,
-    pub universal_deployer: Option<UniversalDeployerConfigJson>,
     #[serde(default)]
-    pub accounts: HashMap<ContractAddress, GenesisAccountJson>,
+    pub accounts: BTreeMap<ContractAddress, GenesisAccountJson>,
     #[serde(default)]
-    pub contracts: HashMap<ContractAddress, GenesisContractJson>,
+    pub contracts: BTreeMap<ContractAddress, GenesisContractJson>,
 }
 
 impl GenesisJson {
@@ -318,19 +285,19 @@ impl TryFrom<GenesisJson> for Genesis {
 
     fn try_from(value: GenesisJson) -> Result<Self, Self::Error> {
         // a lookup table for classes that is assigned a name
-        let mut class_names: HashMap<String, FieldElement> = HashMap::new();
-        let mut classes: HashMap<ClassHash, GenesisClass> = HashMap::new();
+        let mut class_names: HashMap<String, Felt> = HashMap::new();
+        let mut classes: BTreeMap<ClassHash, GenesisClass> = BTreeMap::new();
 
         #[cfg(feature = "slot")]
         // Merely a band aid fix for now.
         // Adding this by default so that we can support mounting the genesis file from k8s
         // ConfigMap when we embed the Controller class, and its capacity is only limited to 1MiB.
         classes.insert(
-            CONTROLLER_ACCOUNT_CONTRACT_CLASS_HASH,
+            CONTROLLER_CLASS_HASH,
             GenesisClass {
-                casm: Arc::new(CONTROLLER_ACCOUNT_CONTRACT_CASM.clone()),
-                compiled_class_hash: CONTROLLER_ACCOUNT_CONTRACT_CLASS_HASH,
-                sierra: Some(Arc::new(CONTROLLER_ACCOUNT_CONTRACT.clone().flatten()?)),
+                casm: Arc::new(CONTROLLER_ACCOUNT_CLASS_CASM.clone()),
+                compiled_class_hash: CONTROLLER_CLASS_HASH,
+                sierra: Some(Arc::new(CONTROLLER_ACCOUNT_CLASS.clone().flatten()?)),
             },
         );
 
@@ -398,103 +365,6 @@ impl TryFrom<GenesisJson> for Genesis {
             classes.insert(class_hash, GenesisClass { compiled_class_hash, sierra, casm });
         }
 
-        let fee_token = FeeTokenConfig {
-            name: value.fee_token.name,
-            symbol: value.fee_token.symbol,
-            decimals: value.fee_token.decimals,
-            address: value.fee_token.address.unwrap_or(DEFAULT_FEE_TOKEN_ADDRESS),
-            class_hash: match value.fee_token.class {
-                Some(ClassNameOrHash::Hash(class_hash)) => class_hash,
-                Some(ClassNameOrHash::Name(ref class_name)) => *class_names
-                    .get(class_name)
-                    .ok_or_else(|| GenesisJsonError::UnknownClassName(class_name.clone()))?,
-                None => DEFAULT_LEGACY_ERC20_CONTRACT_CLASS_HASH,
-            },
-            storage: value.fee_token.storage,
-        };
-
-        match value.fee_token.class {
-            Some(ClassNameOrHash::Hash(hash)) => {
-                if !classes.contains_key(&hash) {
-                    return Err(GenesisJsonError::MissingClass(hash));
-                }
-            }
-
-            Some(ClassNameOrHash::Name(name)) => {
-                let hash = class_names
-                    .get(&name)
-                    .ok_or_else(|| GenesisJsonError::UnknownClassName(name.clone()))?;
-
-                if !classes.contains_key(hash) {
-                    return Err(GenesisJsonError::MissingClass(*hash));
-                }
-            }
-
-            // if no class hash is provided, use the default fee token class
-            None => {
-                let _ = classes.insert(
-                    DEFAULT_LEGACY_ERC20_CONTRACT_CLASS_HASH,
-                    GenesisClass {
-                        sierra: None,
-                        casm: Arc::new(DEFAULT_LEGACY_ERC20_CONTRACT_CASM.clone()),
-                        compiled_class_hash: DEFAULT_LEGACY_ERC20_CONTRACT_COMPILED_CLASS_HASH,
-                    },
-                );
-            }
-        };
-
-        let universal_deployer = if let Some(config) = value.universal_deployer {
-            match config.class {
-                Some(ClassNameOrHash::Hash(hash)) => {
-                    if !classes.contains_key(&hash) {
-                        return Err(GenesisJsonError::MissingClass(hash));
-                    }
-
-                    Some(UniversalDeployerConfig {
-                        class_hash: hash,
-                        address: config.address.unwrap_or(DEFAULT_UDC_ADDRESS),
-                        storage: config.storage,
-                    })
-                }
-
-                Some(ClassNameOrHash::Name(name)) => {
-                    let hash = class_names
-                        .get(&name)
-                        .ok_or_else(|| GenesisJsonError::UnknownClassName(name))?;
-
-                    if !classes.contains_key(hash) {
-                        return Err(GenesisJsonError::MissingClass(*hash));
-                    }
-
-                    Some(UniversalDeployerConfig {
-                        class_hash: *hash,
-                        address: config.address.unwrap_or(DEFAULT_UDC_ADDRESS),
-                        storage: config.storage,
-                    })
-                }
-
-                // if no class hash is provided, use the default UD contract parameters
-                None => {
-                    let class_hash = DEFAULT_LEGACY_UDC_CLASS_HASH;
-                    let address = config.address.unwrap_or(DEFAULT_UDC_ADDRESS);
-                    let storage = config.storage;
-
-                    let _ = classes.insert(
-                        DEFAULT_LEGACY_UDC_CLASS_HASH,
-                        GenesisClass {
-                            sierra: None,
-                            casm: Arc::new(DEFAULT_LEGACY_UDC_CASM.clone()),
-                            compiled_class_hash: DEFAULT_LEGACY_UDC_COMPILED_CLASS_HASH,
-                        },
-                    );
-
-                    Some(UniversalDeployerConfig { class_hash, address, storage })
-                }
-            }
-        } else {
-            None
-        };
-
         let mut allocations: BTreeMap<ContractAddress, GenesisAllocation> = BTreeMap::new();
 
         for (address, account) in value.accounts {
@@ -521,18 +391,16 @@ impl TryFrom<GenesisJson> for Genesis {
                 None => {
                     // check that the default account class exists in the classes field before
                     // inserting it
-                    if let hash_map::Entry::Vacant(e) =
-                        classes.entry(DEFAULT_OZ_ACCOUNT_CONTRACT_CLASS_HASH)
-                    {
+                    if let btree_map::Entry::Vacant(e) = classes.entry(DEFAULT_ACCOUNT_CLASS_HASH) {
                         // insert default account class to the classes map
                         e.insert(GenesisClass {
-                            casm: Arc::new(DEFAULT_OZ_ACCOUNT_CONTRACT_CASM.clone()),
-                            sierra: Some(Arc::new(DEFAULT_OZ_ACCOUNT_CONTRACT.clone().flatten()?)),
-                            compiled_class_hash: DEFAULT_OZ_ACCOUNT_CONTRACT_COMPILED_CLASS_HASH,
+                            casm: Arc::new(DEFAULT_ACCOUNT_CLASS_CASM.clone()),
+                            sierra: Some(Arc::new(DEFAULT_ACCOUNT_CLASS.clone().flatten()?)),
+                            compiled_class_hash: DEFAULT_ACCOUNT_COMPILED_CLASS_HASH,
                         });
                     }
 
-                    DEFAULT_OZ_ACCOUNT_CONTRACT_CLASS_HASH
+                    DEFAULT_ACCOUNT_CLASS_HASH
                 }
             };
 
@@ -602,9 +470,7 @@ impl TryFrom<GenesisJson> for Genesis {
 
         Ok(Genesis {
             classes,
-            fee_token,
             allocations,
-            universal_deployer,
             number: value.number,
             sequencer_address: value.sequencer_address,
             timestamp: value.timestamp,
@@ -677,6 +543,8 @@ mod tests {
     use starknet::macros::felt;
 
     use super::*;
+    use crate::address;
+    use crate::genesis::constant::{DEFAULT_LEGACY_ERC20_CASM, DEFAULT_LEGACY_UDC_CASM};
 
     #[test]
     fn deserialize_from_json() {
@@ -690,40 +558,10 @@ mod tests {
         assert_eq!(json.gas_prices.eth, 1111);
         assert_eq!(json.gas_prices.strk, 2222);
 
-        assert_eq!(json.fee_token.address, Some(ContractAddress::from(felt!("0x55"))));
-        assert_eq!(json.fee_token.name, String::from("ETHER"));
-        assert_eq!(json.fee_token.symbol, String::from("ETH"));
-        assert_eq!(json.fee_token.class, Some(ClassNameOrHash::Name(String::from("MyErc20"))));
-        assert_eq!(json.fee_token.decimals, 18);
-        assert_eq!(
-            json.fee_token.storage,
-            Some(HashMap::from([(felt!("0x111"), felt!("0x1")), (felt!("0x222"), felt!("0x2"))]))
-        );
-
-        assert_eq!(
-            json.universal_deployer.clone().unwrap().address,
-            Some(ContractAddress::from(felt!(
-                "0x041a78e741e5af2fec34b695679bc6891742439f7afb8484ecd7766661ad02bf"
-            )))
-        );
-        assert_eq!(json.universal_deployer.unwrap().class, None);
-        assert_eq!(
-            json.fee_token.storage,
-            Some(HashMap::from([(felt!("0x111"), felt!("0x1")), (felt!("0x222"), felt!("0x2")),]))
-        );
-
-        let acc_1 = ContractAddress::from(felt!(
-            "0x66efb28ac62686966ae85095ff3a772e014e7fbf56d4c5f6fac5606d4dde23a"
-        ));
-        let acc_2 = ContractAddress::from(felt!(
-            "0x6b86e40118f29ebe393a75469b4d926c7a44c2e2681b6d319520b7c1156d114"
-        ));
-        let acc_3 = ContractAddress::from(felt!(
-            "0x79156ecb3d8f084001bb498c95e37fa1c4b40dbb35a3ae47b77b1ad535edcb9"
-        ));
-        let acc_4 = ContractAddress::from(felt!(
-            "0x053a78e741e5af2fec34b695679bc6891742439f7afb8484ecd7766661ad02bf"
-        ));
+        let acc_1 = address!("0x66efb28ac62686966ae85095ff3a772e014e7fbf56d4c5f6fac5606d4dde23a");
+        let acc_2 = address!("0x6b86e40118f29ebe393a75469b4d926c7a44c2e2681b6d319520b7c1156d114");
+        let acc_3 = address!("0x79156ecb3d8f084001bb498c95e37fa1c4b40dbb35a3ae47b77b1ad535edcb9");
+        let acc_4 = address!("0x053a78e741e5af2fec34b695679bc6891742439f7afb8484ecd7766661ad02bf");
 
         assert_eq!(json.accounts.len(), 4);
 
@@ -736,7 +574,7 @@ mod tests {
         assert_eq!(json.accounts[&acc_1].class, Some(ClassNameOrHash::Hash(felt!("0x80085"))));
         assert_eq!(
             json.accounts[&acc_1].storage,
-            Some(HashMap::from([(felt!("0x1"), felt!("0x1")), (felt!("0x2"), felt!("0x2")),]))
+            Some(BTreeMap::from([(felt!("0x1"), felt!("0x1")), (felt!("0x2"), felt!("0x2")),]))
         );
 
         assert_eq!(json.accounts[&acc_2].public_key, felt!("0x2"));
@@ -766,15 +604,12 @@ mod tests {
 
         assert_eq!(json.contracts.len(), 3);
 
-        let contract_1 = ContractAddress::from(felt!(
-            "0x29873c310fbefde666dc32a1554fea6bb45eecc84f680f8a2b0a8fbb8cb89af"
-        ));
-        let contract_2 = ContractAddress::from(felt!(
-            "0xe29882a1fcba1e7e10cad46212257fea5c752a4f9b1b1ec683c503a2cf5c8a"
-        ));
-        let contract_3 = ContractAddress::from(felt!(
-            "0x05400e90f7e0ae78bd02c77cd75527280470e2fe19c54970dd79dc37a9d3645c"
-        ));
+        let contract_1 =
+            address!("0x29873c310fbefde666dc32a1554fea6bb45eecc84f680f8a2b0a8fbb8cb89af");
+        let contract_2 =
+            address!("0xe29882a1fcba1e7e10cad46212257fea5c752a4f9b1b1ec683c503a2cf5c8a");
+        let contract_3 =
+            address!("0x05400e90f7e0ae78bd02c77cd75527280470e2fe19c54970dd79dc37a9d3645c");
 
         assert_eq!(
             json.contracts[&contract_1].balance,
@@ -787,7 +622,7 @@ mod tests {
         );
         assert_eq!(
             json.contracts[&contract_1].storage,
-            Some(HashMap::from([(felt!("0x1"), felt!("0x1")), (felt!("0x2"), felt!("0x2"))]))
+            Some(BTreeMap::from([(felt!("0x1"), felt!("0x1")), (felt!("0x2"), felt!("0x2"))]))
         );
 
         assert_eq!(
@@ -806,7 +641,7 @@ mod tests {
         );
         assert_eq!(
             json.contracts[&contract_3].storage,
-            Some(HashMap::from([(felt!("0x1"), felt!("0x1"))]))
+            Some(BTreeMap::from([(felt!("0x1"), felt!("0x1"))]))
         );
 
         similar_asserts::assert_eq!(
@@ -814,18 +649,17 @@ mod tests {
             vec![
                 GenesisClassJson {
                     class_hash: Some(felt!("0x8")),
-                    class: PathBuf::from("../../../contracts/compiled/erc20.json").into(),
+                    class: PathBuf::from("../../../contracts/build/erc20.json").into(),
                     name: Some("MyErc20".to_string()),
                 },
                 GenesisClassJson {
                     class_hash: Some(felt!("0x80085")),
-                    class: PathBuf::from("../../../contracts/compiled/universal_deployer.json")
-                        .into(),
+                    class: PathBuf::from("../../../contracts/build/universal_deployer.json").into(),
                     name: None,
                 },
                 GenesisClassJson {
                     class_hash: None,
-                    class: PathBuf::from("../../../contracts/compiled/oz_account_080.json").into(),
+                    class: PathBuf::from("../../../contracts/build/default_account.json").into(),
                     name: Some("MyClass".to_string()),
                 },
             ]
@@ -843,20 +677,20 @@ mod tests {
                     vec![
                         GenesisClassJson {
                             class_hash: None,
-                            class: PathBuf::from("../../../contracts/compiled/erc20.json").into(),
+                            class: PathBuf::from("../../../contracts/build/erc20.json").into(),
                             name: Some("MyErc20".to_string()),
                         },
                         GenesisClassJson {
                             class_hash: Some(felt!("0x80085")),
                             class: PathBuf::from(
-                                "../../../contracts/compiled/universal_deployer.json"
+                                "../../../contracts/build/universal_deployer.json"
                             )
                             .into(),
                             name: None,
                         },
                         GenesisClassJson {
                             class_hash: Some(felt!("0xa55")),
-                            class: serde_json::to_value(DEFAULT_OZ_ACCOUNT_CONTRACT.clone())
+                            class: serde_json::to_value(DEFAULT_ACCOUNT_CLASS.clone())
                                 .unwrap()
                                 .into(),
                             name: None,
@@ -877,85 +711,52 @@ mod tests {
         let json = GenesisJson::load(path).unwrap();
         let actual_genesis = Genesis::try_from(json).unwrap();
 
-        let expected_classes = HashMap::from([
+        let expected_classes = BTreeMap::from([
             (
-                felt!("0x07b3e05f48f0c69e4a65ce5e076a66271a527aff2c34ce1083ec6e1526997a69"),
+                felt!("0x8"),
                 GenesisClass {
+                    compiled_class_hash: felt!("0x8"),
+                    casm: DEFAULT_LEGACY_ERC20_CASM.clone().into(),
                     sierra: None,
-                    casm: DEFAULT_LEGACY_UDC_CASM.clone().into(),
-                    compiled_class_hash: felt!(
-                        "0x07b3e05f48f0c69e4a65ce5e076a66271a527aff2c34ce1083ec6e1526997a69"
-                    ),
                 },
             ),
             (
                 felt!("0x80085"),
                 GenesisClass {
-                    sierra: None,
-                    casm: DEFAULT_LEGACY_UDC_CASM.clone().into(),
                     compiled_class_hash: felt!("0x80085"),
-                },
-            ),
-            (
-                felt!("0x8"),
-                GenesisClass {
+                    casm: DEFAULT_LEGACY_UDC_CASM.clone().into(),
                     sierra: None,
-                    compiled_class_hash: felt!("0x8"),
-                    casm: DEFAULT_LEGACY_ERC20_CONTRACT_CASM.clone().into(),
                 },
             ),
             (
-                DEFAULT_OZ_ACCOUNT_CONTRACT_CLASS_HASH,
+                DEFAULT_ACCOUNT_CLASS_HASH,
                 GenesisClass {
-                    compiled_class_hash: DEFAULT_OZ_ACCOUNT_CONTRACT_COMPILED_CLASS_HASH,
-                    casm: DEFAULT_OZ_ACCOUNT_CONTRACT_CASM.clone().into(),
-                    sierra: Some(DEFAULT_OZ_ACCOUNT_CONTRACT.clone().flatten().unwrap().into()),
+                    compiled_class_hash: DEFAULT_ACCOUNT_COMPILED_CLASS_HASH,
+                    casm: DEFAULT_ACCOUNT_CLASS_CASM.clone().into(),
+                    sierra: Some(DEFAULT_ACCOUNT_CLASS.clone().flatten().unwrap().into()),
                 },
             ),
             #[cfg(feature = "slot")]
             (
-                CONTROLLER_ACCOUNT_CONTRACT_CLASS_HASH,
+                CONTROLLER_CLASS_HASH,
                 GenesisClass {
-                    casm: Arc::new(CONTROLLER_ACCOUNT_CONTRACT_CASM.clone()),
-                    compiled_class_hash: CONTROLLER_ACCOUNT_CONTRACT_CLASS_HASH,
-                    sierra: Some(Arc::new(CONTROLLER_ACCOUNT_CONTRACT.clone().flatten().unwrap())),
+                    casm: Arc::new(CONTROLLER_ACCOUNT_CLASS_CASM.clone()),
+                    compiled_class_hash: CONTROLLER_CLASS_HASH,
+                    sierra: Some(Arc::new(CONTROLLER_ACCOUNT_CLASS.clone().flatten().unwrap())),
                 },
             ),
         ]);
 
-        let expected_fee_token = FeeTokenConfig {
-            address: ContractAddress::from(felt!("0x55")),
-            name: String::from("ETHER"),
-            symbol: String::from("ETH"),
-            decimals: 18,
-            class_hash: felt!("0x8"),
-            storage: Some(HashMap::from([
-                (felt!("0x111"), felt!("0x1")),
-                (felt!("0x222"), felt!("0x2")),
-            ])),
-        };
-
-        let acc_1 = ContractAddress::from(felt!(
-            "0x66efb28ac62686966ae85095ff3a772e014e7fbf56d4c5f6fac5606d4dde23a"
-        ));
-        let acc_2 = ContractAddress::from(felt!(
-            "0x6b86e40118f29ebe393a75469b4d926c7a44c2e2681b6d319520b7c1156d114"
-        ));
-        let acc_3 = ContractAddress::from(felt!(
-            "0x79156ecb3d8f084001bb498c95e37fa1c4b40dbb35a3ae47b77b1ad535edcb9"
-        ));
-        let acc_4 = ContractAddress::from(felt!(
-            "0x053a78e741e5af2fec34b695679bc6891742439f7afb8484ecd7766661ad02bf"
-        ));
-        let contract_1 = ContractAddress::from(felt!(
-            "0x29873c310fbefde666dc32a1554fea6bb45eecc84f680f8a2b0a8fbb8cb89af"
-        ));
-        let contract_2 = ContractAddress::from(felt!(
-            "0xe29882a1fcba1e7e10cad46212257fea5c752a4f9b1b1ec683c503a2cf5c8a"
-        ));
-        let contract_3 = ContractAddress::from(felt!(
-            "0x05400e90f7e0ae78bd02c77cd75527280470e2fe19c54970dd79dc37a9d3645c"
-        ));
+        let acc_1 = address!("0x66efb28ac62686966ae85095ff3a772e014e7fbf56d4c5f6fac5606d4dde23a");
+        let acc_2 = address!("0x6b86e40118f29ebe393a75469b4d926c7a44c2e2681b6d319520b7c1156d114");
+        let acc_3 = address!("0x79156ecb3d8f084001bb498c95e37fa1c4b40dbb35a3ae47b77b1ad535edcb9");
+        let acc_4 = address!("0x053a78e741e5af2fec34b695679bc6891742439f7afb8484ecd7766661ad02bf");
+        let contract_1 =
+            address!("0x29873c310fbefde666dc32a1554fea6bb45eecc84f680f8a2b0a8fbb8cb89af");
+        let contract_2 =
+            address!("0xe29882a1fcba1e7e10cad46212257fea5c752a4f9b1b1ec683c503a2cf5c8a");
+        let contract_3 =
+            address!("0x05400e90f7e0ae78bd02c77cd75527280470e2fe19c54970dd79dc37a9d3645c");
 
         let expected_allocations = BTreeMap::from([
             (
@@ -965,7 +766,7 @@ mod tests {
                     balance: Some(U256::from_str("0xD3C21BCECCEDA1000000").unwrap()),
                     nonce: Some(felt!("0x1")),
                     class_hash: felt!("0x80085"),
-                    storage: Some(HashMap::from([
+                    storage: Some(BTreeMap::from([
                         (felt!("0x1"), felt!("0x1")),
                         (felt!("0x2"), felt!("0x2")),
                     ])),
@@ -976,7 +777,7 @@ mod tests {
                 GenesisAllocation::Account(GenesisAccountAlloc::Account(GenesisAccount {
                     public_key: felt!("0x2"),
                     balance: Some(U256::from_str("0xD3C21BCECCEDA1000000").unwrap()),
-                    class_hash: DEFAULT_OZ_ACCOUNT_CONTRACT_CLASS_HASH,
+                    class_hash: DEFAULT_ACCOUNT_CLASS_HASH,
                     nonce: None,
                     storage: None,
                 })),
@@ -986,7 +787,7 @@ mod tests {
                 GenesisAllocation::Account(GenesisAccountAlloc::Account(GenesisAccount {
                     public_key: felt!("0x3"),
                     balance: None,
-                    class_hash: DEFAULT_OZ_ACCOUNT_CONTRACT_CLASS_HASH,
+                    class_hash: DEFAULT_ACCOUNT_CLASS_HASH,
                     nonce: None,
                     storage: None,
                 })),
@@ -998,7 +799,7 @@ mod tests {
                     inner: GenesisAccount {
                         public_key: felt!("0x4"),
                         balance: Some(U256::from_str("0xD3C21BCECCEDA1000000").unwrap()),
-                        class_hash: DEFAULT_OZ_ACCOUNT_CONTRACT_CLASS_HASH,
+                        class_hash: DEFAULT_ACCOUNT_CLASS_HASH,
                         nonce: None,
                         storage: None,
                     },
@@ -1010,7 +811,7 @@ mod tests {
                     balance: Some(U256::from_str("0xD3C21BCECCEDA1000000").unwrap()),
                     nonce: None,
                     class_hash: Some(felt!("0x8")),
-                    storage: Some(HashMap::from([
+                    storage: Some(BTreeMap::from([
                         (felt!("0x1"), felt!("0x1")),
                         (felt!("0x2"), felt!("0x2")),
                     ])),
@@ -1031,7 +832,7 @@ mod tests {
                     balance: None,
                     nonce: None,
                     class_hash: Some(felt!("0x80085")),
-                    storage: Some(HashMap::from([(felt!("0x1"), felt!("0x1"))])),
+                    storage: Some(BTreeMap::from([(felt!("0x1"), felt!("0x1"))])),
                 }),
             ),
         ]);
@@ -1039,20 +840,13 @@ mod tests {
         let expected_genesis = Genesis {
             classes: expected_classes,
             number: 0,
-            fee_token: expected_fee_token,
+            // fee_token: expected_fee_token,
             allocations: expected_allocations,
             timestamp: 5123512314u64,
-            sequencer_address: ContractAddress::from(felt!("0x100")),
+            sequencer_address: address!("0x100"),
             state_root: felt!("0x99"),
             parent_hash: felt!("0x999"),
             gas_prices: GasPrices { eth: 1111, strk: 2222 },
-            universal_deployer: Some(UniversalDeployerConfig {
-                class_hash: DEFAULT_LEGACY_UDC_CLASS_HASH,
-                address: ContractAddress::from(felt!(
-                    "0x041a78e741e5af2fec34b695679bc6891742439f7afb8484ecd7766661ad02bf"
-                )),
-                storage: Some([(felt!("0x10"), felt!("0x100"))].into()),
-            }),
         };
 
         assert_eq!(actual_genesis.number, expected_genesis.number);
@@ -1060,12 +854,6 @@ mod tests {
         assert_eq!(actual_genesis.timestamp, expected_genesis.timestamp);
         assert_eq!(actual_genesis.state_root, expected_genesis.state_root);
         assert_eq!(actual_genesis.gas_prices, expected_genesis.gas_prices);
-        assert_eq!(actual_genesis.fee_token.address, expected_genesis.fee_token.address);
-        assert_eq!(actual_genesis.fee_token.name, expected_genesis.fee_token.name);
-        assert_eq!(actual_genesis.fee_token.symbol, expected_genesis.fee_token.symbol);
-        assert_eq!(actual_genesis.fee_token.decimals, expected_genesis.fee_token.decimals);
-        assert_eq!(actual_genesis.fee_token.class_hash, expected_genesis.fee_token.class_hash);
-        assert_eq!(actual_genesis.universal_deployer, expected_genesis.universal_deployer);
         assert_eq!(actual_genesis.allocations.len(), expected_genesis.allocations.len());
 
         for alloc in actual_genesis.allocations {
@@ -1116,82 +904,48 @@ mod tests {
         let genesis_json: GenesisJson = GenesisJson::from_str(json).unwrap();
         let actual_genesis = Genesis::try_from(genesis_json).unwrap();
 
-        let classes = HashMap::from([
+        let classes = BTreeMap::from([
             (
-                DEFAULT_LEGACY_UDC_CLASS_HASH,
+                DEFAULT_ACCOUNT_CLASS_HASH,
                 GenesisClass {
-                    sierra: None,
-                    casm: DEFAULT_LEGACY_UDC_CASM.clone().into(),
-                    compiled_class_hash: DEFAULT_LEGACY_UDC_COMPILED_CLASS_HASH,
-                },
-            ),
-            (
-                DEFAULT_LEGACY_ERC20_CONTRACT_CLASS_HASH,
-                GenesisClass {
-                    sierra: None,
-                    casm: DEFAULT_LEGACY_ERC20_CONTRACT_CASM.clone().into(),
-                    compiled_class_hash: DEFAULT_LEGACY_ERC20_CONTRACT_COMPILED_CLASS_HASH,
-                },
-            ),
-            (
-                DEFAULT_OZ_ACCOUNT_CONTRACT_CLASS_HASH,
-                GenesisClass {
-                    compiled_class_hash: DEFAULT_OZ_ACCOUNT_CONTRACT_COMPILED_CLASS_HASH,
-                    casm: DEFAULT_OZ_ACCOUNT_CONTRACT_CASM.clone().into(),
-                    sierra: Some(DEFAULT_OZ_ACCOUNT_CONTRACT.clone().flatten().unwrap().into()),
+                    compiled_class_hash: DEFAULT_ACCOUNT_COMPILED_CLASS_HASH,
+                    casm: DEFAULT_ACCOUNT_CLASS_CASM.clone().into(),
+                    sierra: Some(DEFAULT_ACCOUNT_CLASS.clone().flatten().unwrap().into()),
                 },
             ),
             #[cfg(feature = "slot")]
             (
-                CONTROLLER_ACCOUNT_CONTRACT_CLASS_HASH,
+                CONTROLLER_CLASS_HASH,
                 GenesisClass {
-                    casm: Arc::new(CONTROLLER_ACCOUNT_CONTRACT_CASM.clone()),
-                    compiled_class_hash: CONTROLLER_ACCOUNT_CONTRACT_CLASS_HASH,
-                    sierra: Some(Arc::new(CONTROLLER_ACCOUNT_CONTRACT.clone().flatten().unwrap())),
+                    casm: Arc::new(CONTROLLER_ACCOUNT_CLASS_CASM.clone()),
+                    compiled_class_hash: CONTROLLER_CLASS_HASH,
+                    sierra: Some(Arc::new(CONTROLLER_ACCOUNT_CLASS.clone().flatten().unwrap())),
                 },
             ),
         ]);
 
-        let fee_token = FeeTokenConfig {
-            address: DEFAULT_FEE_TOKEN_ADDRESS,
-            name: String::from("ETHER"),
-            symbol: String::from("ETH"),
-            decimals: 18,
-            class_hash: DEFAULT_LEGACY_ERC20_CONTRACT_CLASS_HASH,
-            storage: None,
-        };
-
         let allocations = BTreeMap::from([(
-            ContractAddress::from(felt!(
-                "0x66efb28ac62686966ae85095ff3a772e014e7fbf56d4c5f6fac5606d4dde23a"
-            )),
+            address!("0x66efb28ac62686966ae85095ff3a772e014e7fbf56d4c5f6fac5606d4dde23a"),
             GenesisAllocation::Account(GenesisAccountAlloc::Account(GenesisAccount {
                 public_key: felt!("0x1"),
                 balance: Some(U256::from_str("0xD3C21BCECCEDA1000000").unwrap()),
-                class_hash: DEFAULT_OZ_ACCOUNT_CONTRACT_CLASS_HASH,
+                class_hash: DEFAULT_ACCOUNT_CLASS_HASH,
                 nonce: None,
                 storage: None,
             })),
         )]);
 
         let expected_genesis = Genesis {
-            fee_token,
             classes,
             allocations,
             number: 0,
             timestamp: 5123512314u64,
             state_root: felt!("0x99"),
             parent_hash: felt!("0x999"),
-            sequencer_address: ContractAddress(felt!("0x100")),
+            sequencer_address: address!("0x100"),
             gas_prices: GasPrices { eth: 1111, strk: 2222 },
-            universal_deployer: Some(UniversalDeployerConfig {
-                class_hash: DEFAULT_LEGACY_UDC_CLASS_HASH,
-                address: DEFAULT_UDC_ADDRESS,
-                storage: None,
-            }),
         };
 
-        assert_eq!(actual_genesis.universal_deployer, expected_genesis.universal_deployer);
         assert_eq!(actual_genesis.allocations.len(), expected_genesis.allocations.len());
 
         for (address, alloc) in actual_genesis.allocations {

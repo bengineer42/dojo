@@ -1,7 +1,5 @@
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 
-mod logs;
-mod prefunded;
 mod utils;
 
 use std::path::PathBuf;
@@ -10,13 +8,32 @@ use std::thread;
 use anyhow::{Context, Result};
 use assert_fs::TempDir;
 use katana_node_bindings::{Katana, KatanaInstance};
-pub use runner_macro::{katana_test, runner};
-use starknet::core::types::Felt;
+pub use katana_runner_macro::test;
+use starknet::accounts::{ExecutionEncoding, SingleOwnerAccount};
+use starknet::core::types::{BlockId, BlockTag, Felt};
 use starknet::providers::jsonrpc::HttpTransport;
 use starknet::providers::JsonRpcClient;
+use starknet::signers::LocalWallet;
 use tokio::sync::Mutex;
 use url::Url;
 use utils::find_free_port;
+
+#[allow(dead_code)]
+#[derive(Debug)]
+pub struct RunnerCtx(KatanaRunner);
+
+impl RunnerCtx {
+    pub fn new(runner: KatanaRunner) -> Self {
+        Self(runner)
+    }
+}
+
+impl core::ops::Deref for RunnerCtx {
+    type Target = KatanaRunner;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
 
 #[derive(Debug)]
 pub struct KatanaRunner {
@@ -45,6 +62,12 @@ pub struct KatanaRunnerConfig {
     pub log_path: Option<PathBuf>,
     /// The messaging config file
     pub messaging: Option<String>,
+    /// The path to the database dir.
+    pub db_dir: Option<PathBuf>,
+    /// Whether to run the katana runner with the `dev` rpc endpoints.
+    pub dev: bool,
+    /// The chain id to use.
+    pub chain_id: Option<Felt>,
 }
 
 impl Default for KatanaRunnerConfig {
@@ -58,7 +81,17 @@ impl Default for KatanaRunnerConfig {
             run_name: None,
             log_path: None,
             messaging: None,
+            db_dir: None,
+            dev: false,
+            chain_id: None,
         }
+    }
+}
+
+impl KatanaRunnerConfig {
+    pub fn with_db_dir(mut self, db_dir: &str) -> Self {
+        self.db_dir = Some(PathBuf::from(db_dir));
+        self
     }
 }
 
@@ -89,7 +122,12 @@ impl KatanaRunner {
             .accounts(n_accounts)
             .json_log(true)
             .max_connections(10000)
+            .dev(config.dev)
             .fee(!config.disable_fee);
+
+        if let Some(id) = config.chain_id {
+            builder = builder.chain_id(id);
+        }
 
         if let Some(block_time_ms) = config.block_time {
             builder = builder.block_time(block_time_ms);
@@ -99,14 +137,21 @@ impl KatanaRunner {
             builder = builder.messaging(messaging_file);
         }
 
-        let mut katana = builder.spawn();
+        if let Some(path) = config.db_dir {
+            builder = builder.db_dir(path);
+        }
+
+        builder = builder.dev(config.dev);
+
+        // start the katana instance
+        let mut instance = builder.spawn();
 
         let stdout =
-            katana.child_mut().stdout.take().context("failed to take subprocess stdout")?;
+            instance.child_mut().stdout.take().context("failed to take subprocess stdout")?;
 
         let log_filename = PathBuf::from(format!(
             "katana-{}.log",
-            config.run_name.clone().unwrap_or_else(|| port.to_string())
+            config.run_name.unwrap_or_else(|| port.to_string())
         ));
 
         let log_file_path = if let Some(log_path) = config.log_path {
@@ -121,10 +166,10 @@ impl KatanaRunner {
             utils::listen_to_stdout(&log_file_path_sent, stdout);
         });
 
-        let provider = JsonRpcClient::new(HttpTransport::new(katana.endpoint_url()));
+        let provider = JsonRpcClient::new(HttpTransport::new(instance.endpoint_url()));
         let contract = Mutex::new(Option::None);
 
-        Ok(KatanaRunner { instance: katana, provider, log_file_path, contract })
+        Ok(KatanaRunner { instance, provider, log_file_path, contract })
     }
 
     pub fn log_file_path(&self) -> &PathBuf {
@@ -158,6 +203,51 @@ impl KatanaRunner {
     pub async fn contract(&self) -> Option<Felt> {
         *self.contract.lock().await
     }
+
+    pub fn accounts_data(&self) -> &[katana_node_bindings::Account] {
+        self.instance.accounts()
+    }
+
+    pub fn accounts(&self) -> Vec<SingleOwnerAccount<JsonRpcClient<HttpTransport>, LocalWallet>> {
+        self.accounts_data().iter().map(|account| self.account_to_single_owned(account)).collect()
+    }
+
+    pub fn account_data(&self, index: usize) -> &katana_node_bindings::Account {
+        &self.accounts_data()[index]
+    }
+
+    pub fn account(
+        &self,
+        index: usize,
+    ) -> SingleOwnerAccount<JsonRpcClient<HttpTransport>, LocalWallet> {
+        self.account_to_single_owned(&self.accounts_data()[index])
+    }
+
+    fn account_to_single_owned(
+        &self,
+        account: &katana_node_bindings::Account,
+    ) -> SingleOwnerAccount<JsonRpcClient<HttpTransport>, LocalWallet> {
+        let signer = if let Some(private_key) = &account.private_key {
+            LocalWallet::from(private_key.clone())
+        } else {
+            panic!("Account does not have a private key")
+        };
+
+        let chain_id = self.instance.chain_id();
+        let provider = self.owned_provider();
+
+        let mut account = SingleOwnerAccount::new(
+            provider,
+            signer,
+            account.address,
+            chain_id,
+            ExecutionEncoding::New,
+        );
+
+        account.set_block_id(BlockId::Tag(BlockTag::Pending));
+
+        account
+    }
 }
 
 /// Determines the default program path for the katana runner based on the KATANA_RUNNER_BIN
@@ -168,7 +258,7 @@ fn determine_default_program_path() -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use crate::determine_default_program_path;
 
     #[test]
     fn test_determine_default_program_path() {

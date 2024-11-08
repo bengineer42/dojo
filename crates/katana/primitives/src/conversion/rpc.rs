@@ -27,7 +27,7 @@ use crate::class::{
     ClassHash, CompiledClassHash, DeprecatedCompiledClass, FlattenedSierraClass,
     SierraCompiledClass, SierraProgram,
 };
-use crate::FieldElement;
+use crate::Felt;
 
 /// Converts the legacy inner compiled class type [DeprecatedCompiledClass] into its RPC equivalent
 /// [`ContractClass`].
@@ -158,7 +158,7 @@ pub fn flattened_sierra_to_compiled_class(
 /// Compute the compiled class hash from the given [`FlattenedSierraClass`].
 pub fn compiled_class_hash_from_flattened_sierra_class(
     contract_class: &FlattenedSierraClass,
-) -> Result<FieldElement> {
+) -> Result<Felt> {
     let contract_class = rpc_to_cairo_contract_class(contract_class)?;
     let casm = CasmContractClass::from_contract_class(contract_class, true, usize::MAX)?;
     let compiled_class: CompiledClass = serde_json::from_str(&serde_json::to_string(&casm)?)?;
@@ -243,7 +243,7 @@ fn decompress_legacy_program_data(data: &[u8]) -> Result<LegacyProgram, io::Erro
         builtins: Vec<String>,
         compiler_version: Option<String>,
         #[serde_as(as = "Vec<UfeHex>")]
-        data: Vec<FieldElement>,
+        data: Vec<Felt>,
         debug_info: Option<LegacyDebugInfo>,
         hints: BTreeMap<u64, Vec<LegacyHint>>,
         identifiers: BTreeMap<String, LegacyIdentifier>,
@@ -275,12 +275,12 @@ mod tests {
 
     use super::{legacy_inner_to_rpc_class, legacy_rpc_to_compiled_class};
     use crate::class::{CompiledClass, DeprecatedCompiledClass};
-    use crate::genesis::constant::DEFAULT_OZ_ACCOUNT_CONTRACT;
+    use crate::genesis::constant::DEFAULT_ACCOUNT_CLASS;
     use crate::utils::class::parse_deprecated_compiled_class;
 
     #[test]
     fn legacy_rpc_to_inner_and_back() {
-        let json = include_str!("../../../contracts/compiled/account.json");
+        let json = include_str!("../../../contracts/build/account.json");
         let json = serde_json::from_str(json).unwrap();
         let class: DeprecatedCompiledClass = parse_deprecated_compiled_class(json).unwrap();
 
@@ -301,7 +301,7 @@ mod tests {
 
     #[test]
     fn flattened_sierra_class_to_compiled_class() {
-        let sierra = DEFAULT_OZ_ACCOUNT_CONTRACT.clone().flatten().unwrap();
+        let sierra = DEFAULT_ACCOUNT_CLASS.clone().flatten().unwrap();
         assert!(super::flattened_sierra_to_compiled_class(&sierra).is_ok());
     }
 }

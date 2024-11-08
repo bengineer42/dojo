@@ -1,13 +1,11 @@
+#![warn(unused_crate_dependencies)]
+
 //! Saya executable entry point.
 use clap::Parser;
 use console::Style;
 use saya_core::{Saya, SayaConfig};
-use tokio::signal::ctrl_c;
 
 mod args;
-
-#[cfg(test)]
-mod tests;
 
 use args::SayaArgs;
 
@@ -23,7 +21,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     saya.start().await?;
 
     // Wait until Ctrl + C is pressed, then shutdown
-    ctrl_c().await?;
+    // ctrl_c().await?;
     // handle.stop()?;
 
     Ok(())

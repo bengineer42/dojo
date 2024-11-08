@@ -7,7 +7,7 @@ use blockifier::state::state_api::{StateReader, StateResult};
 use katana_cairo::starknet_api::core::{ClassHash, CompiledClassHash, Nonce};
 use katana_cairo::starknet_api::state::StorageKey;
 use katana_primitives::class::{CompiledClass, FlattenedSierraClass};
-use katana_primitives::FieldElement;
+use katana_primitives::Felt;
 use katana_provider::error::ProviderError;
 use katana_provider::traits::contract::ContractClassProvider;
 use katana_provider::traits::state::StateProvider;
@@ -27,8 +27,7 @@ impl<'a> StateReader for StateProviderDb<'a> {
         &self,
         contract_address: katana_cairo::starknet_api::core::ContractAddress,
     ) -> StateResult<katana_cairo::starknet_api::core::ClassHash> {
-        self.0
-            .class_hash_of_contract(utils::to_address(contract_address))
+        self.class_hash_of_contract(utils::to_address(contract_address))
             .map(|v| ClassHash(v.unwrap_or_default()))
             .map_err(|e| StateError::StateReadError(e.to_string()))
     }
@@ -38,7 +37,6 @@ impl<'a> StateReader for StateProviderDb<'a> {
         class_hash: katana_cairo::starknet_api::core::ClassHash,
     ) -> StateResult<katana_cairo::starknet_api::core::CompiledClassHash> {
         if let Some(hash) = self
-            .0
             .compiled_class_hash_of_class_hash(class_hash.0)
             .map_err(|e| StateError::StateReadError(e.to_string()))?
         {
@@ -53,7 +51,7 @@ impl<'a> StateReader for StateProviderDb<'a> {
         class_hash: ClassHash,
     ) -> StateResult<blockifier::execution::contract_class::ContractClass> {
         if let Some(class) =
-            self.0.class(class_hash.0).map_err(|e| StateError::StateReadError(e.to_string()))?
+            self.class(class_hash.0).map_err(|e| StateError::StateReadError(e.to_string()))?
         {
             let class =
                 utils::to_class(class).map_err(|e| StateError::StateReadError(e.to_string()))?;
@@ -68,8 +66,7 @@ impl<'a> StateReader for StateProviderDb<'a> {
         &self,
         contract_address: katana_cairo::starknet_api::core::ContractAddress,
     ) -> StateResult<katana_cairo::starknet_api::core::Nonce> {
-        self.0
-            .nonce(utils::to_address(contract_address))
+        self.nonce(utils::to_address(contract_address))
             .map(|n| Nonce(n.unwrap_or_default()))
             .map_err(|e| StateError::StateReadError(e.to_string()))
     }
@@ -79,15 +76,14 @@ impl<'a> StateReader for StateProviderDb<'a> {
         contract_address: katana_cairo::starknet_api::core::ContractAddress,
         key: katana_cairo::starknet_api::state::StorageKey,
     ) -> StateResult<katana_cairo::starknet_api::hash::StarkHash> {
-        self.0
-            .storage(utils::to_address(contract_address), *key.0.key())
+        self.storage(utils::to_address(contract_address), *key.0.key())
             .map(|v| v.unwrap_or_default())
             .map_err(|e| StateError::StateReadError(e.to_string()))
     }
 }
 
 #[derive(Debug)]
-pub(super) struct CachedState<S: StateDb>(pub(super) Arc<Mutex<CachedStateInner<S>>>);
+pub struct CachedState<S: StateDb>(pub(super) Arc<Mutex<CachedStateInner<S>>>);
 
 impl<S: StateDb> Clone for CachedState<S> {
     fn clone(&self) -> Self {
@@ -133,7 +129,7 @@ impl<S: StateDb> ContractClassProvider for CachedState<S> {
             return Ok(None);
         };
 
-        if hash.0 == FieldElement::ZERO { Ok(None) } else { Ok(Some(hash.0)) }
+        if hash.0 == Felt::ZERO { Ok(None) } else { Ok(Some(hash.0)) }
     }
     fn sierra_class(
         &self,
@@ -157,7 +153,7 @@ impl<S: StateDb> StateProvider for CachedState<S> {
             return Ok(None);
         };
 
-        if hash.0 == FieldElement::ZERO { Ok(None) } else { Ok(Some(hash.0)) }
+        if hash.0 == Felt::ZERO { Ok(None) } else { Ok(Some(hash.0)) }
     }
 
     fn nonce(
@@ -238,12 +234,12 @@ mod tests {
     use katana_primitives::class::{CompiledClass, FlattenedSierraClass};
     use katana_primitives::contract::ContractAddress;
     use katana_primitives::genesis::constant::{
-        DEFAULT_LEGACY_ERC20_CONTRACT_CASM, DEFAULT_LEGACY_UDC_CASM, DEFAULT_OZ_ACCOUNT_CONTRACT,
-        DEFAULT_OZ_ACCOUNT_CONTRACT_CASM,
+        DEFAULT_ACCOUNT_CLASS, DEFAULT_ACCOUNT_CLASS_CASM, DEFAULT_LEGACY_ERC20_CASM,
+        DEFAULT_LEGACY_UDC_CASM,
     };
     use katana_primitives::utils::class::{parse_compiled_class, parse_sierra_class};
-    use katana_primitives::FieldElement;
-    use katana_provider::providers::in_memory::InMemoryProvider;
+    use katana_primitives::{address, Felt};
+    use katana_provider::providers::db::DbProvider;
     use katana_provider::traits::contract::ContractClassWriter;
     use katana_provider::traits::state::{StateFactoryProvider, StateProvider, StateWriter};
     use starknet::macros::felt;
@@ -252,7 +248,7 @@ mod tests {
     use crate::StateProviderDb;
 
     fn new_sierra_class() -> (FlattenedSierraClass, CompiledClass) {
-        let json = include_str!("../../../../contracts/compiled/cairo1_contract.json");
+        let json = include_str!("../../../../contracts/build/cairo1_contract.json");
         let artifact = serde_json::from_str(json).unwrap();
         let compiled_class = parse_compiled_class(artifact).unwrap();
         let sierra_class = parse_sierra_class(json).unwrap().flatten().unwrap();
@@ -260,18 +256,18 @@ mod tests {
     }
 
     fn state_provider() -> Box<dyn StateProvider> {
-        let address = ContractAddress::from(felt!("0x67"));
+        let address = address!("0x67");
         let nonce = felt!("0x7");
         let storage_key = felt!("0x1");
         let storage_value = felt!("0x2");
         let class_hash = felt!("0x123");
         let compiled_hash = felt!("0x456");
-        let sierra_class = DEFAULT_OZ_ACCOUNT_CONTRACT.clone().flatten().unwrap();
-        let class = DEFAULT_OZ_ACCOUNT_CONTRACT_CASM.clone();
+        let sierra_class = DEFAULT_ACCOUNT_CLASS.clone().flatten().unwrap();
+        let class = DEFAULT_ACCOUNT_CLASS_CASM.clone();
         let legacy_class_hash = felt!("0x111");
-        let legacy_class = DEFAULT_LEGACY_ERC20_CONTRACT_CASM.clone();
+        let legacy_class = DEFAULT_LEGACY_ERC20_CASM.clone();
 
-        let provider = InMemoryProvider::new();
+        let provider = katana_provider::test_utils::test_provider();
         provider.set_nonce(address, nonce).unwrap();
         provider.set_class_hash_of_contract(address, class_hash).unwrap();
         provider.set_storage(address, storage_key, storage_value).unwrap();
@@ -286,9 +282,9 @@ mod tests {
     #[test]
     fn can_fetch_from_inner_state_provider() -> anyhow::Result<()> {
         let state = state_provider();
-        let cached_state = CachedState::new(StateProviderDb(state));
+        let cached_state = CachedState::new(StateProviderDb::new(state));
 
-        let address = ContractAddress::from(felt!("0x67"));
+        let address = address!("0x67");
         let legacy_class_hash = felt!("0x111");
         let storage_key = felt!("0x1");
 
@@ -308,11 +304,11 @@ mod tests {
         assert_eq!(actual_compiled_hash.0, felt!("0x456"));
         assert_eq!(
             actual_class,
-            utils::to_class(DEFAULT_OZ_ACCOUNT_CONTRACT_CASM.clone()).unwrap().contract_class()
+            utils::to_class(DEFAULT_ACCOUNT_CLASS_CASM.clone()).unwrap().contract_class()
         );
         assert_eq!(
             actual_legacy_class,
-            utils::to_class(DEFAULT_LEGACY_ERC20_CONTRACT_CASM.clone()).unwrap().contract_class()
+            utils::to_class(DEFAULT_LEGACY_ERC20_CASM.clone()).unwrap().contract_class()
         );
 
         Ok(())
@@ -323,7 +319,7 @@ mod tests {
         let sp = state_provider();
 
         // cache_state native data
-        let new_address = ContractAddress::from(felt!("0xdead"));
+        let new_address = address!("0xdead");
         let new_storage_key = felt!("0xf00");
         let new_storage_value = felt!("0xba");
         let new_legacy_class_hash = felt!("0x1234");
@@ -357,7 +353,7 @@ mod tests {
         assert_eq!(actual_new_compiled_class_hash, None, "data shouldn't exist");
         assert_eq!(actual_new_legacy_compiled_hash, None, "data shouldn't exist");
 
-        let cached_state = CachedState::new(StateProviderDb(sp));
+        let cached_state = CachedState::new(StateProviderDb::new(sp));
 
         // insert some data to the cached state
         {
@@ -395,7 +391,7 @@ mod tests {
         // assert that can fetch data from the underlyign state provider
         let sp: Box<dyn StateProvider> = Box::new(cached_state);
 
-        let address = ContractAddress::from(felt!("0x67"));
+        let address = address!("0x67");
         let class_hash = felt!("0x123");
         let legacy_class_hash = felt!("0x111");
 
@@ -411,9 +407,9 @@ mod tests {
         assert_eq!(actual_class_hash, Some(class_hash));
         assert_eq!(actual_storage_value, Some(felt!("0x2")));
         assert_eq!(actual_compiled_hash, Some(felt!("0x456")));
-        assert_eq!(actual_class, Some(DEFAULT_OZ_ACCOUNT_CONTRACT_CASM.clone()));
-        assert_eq!(actual_sierra_class, Some(DEFAULT_OZ_ACCOUNT_CONTRACT.clone().flatten()?));
-        assert_eq!(actual_legacy_class, Some(DEFAULT_LEGACY_ERC20_CONTRACT_CASM.clone()));
+        assert_eq!(actual_class, Some(DEFAULT_ACCOUNT_CLASS_CASM.clone()));
+        assert_eq!(actual_sierra_class, Some(DEFAULT_ACCOUNT_CLASS.clone().flatten()?));
+        assert_eq!(actual_legacy_class, Some(DEFAULT_LEGACY_ERC20_CASM.clone()));
 
         // assert that can fetch data native to the cached state from the state provider
 
@@ -456,9 +452,9 @@ mod tests {
 
     #[test]
     fn fetch_non_existant_data() -> anyhow::Result<()> {
-        let db = InMemoryProvider::new();
+        let db = DbProvider::new_ephemeral();
 
-        let address = ContractAddress::from(felt!("0x1"));
+        let address = address!("0x1");
         let class_hash = felt!("0x123");
         let storage_key = felt!("0x1");
 
@@ -467,12 +463,12 @@ mod tests {
         // only return None if the contract does not exist. The intended behaviour for
         // StateProvider::storage is to return None if the storage key or contract address
         // does not exist.
-        let edge_address = ContractAddress::from(felt!("0x2"));
+        let edge_address = address!("0x2");
         db.set_class_hash_of_contract(edge_address, class_hash)?;
 
         let sp = db.latest()?;
 
-        let cached_state = CachedState::new(StateProviderDb(sp));
+        let cached_state = CachedState::new(StateProviderDb::new(sp));
 
         let api_address = utils::to_blk_address(address);
         let api_storage_key = StorageKey(storage_key.try_into().unwrap());
@@ -528,7 +524,7 @@ mod tests {
         assert_eq!(actual_storage_value, None, "value of nonexistant contract should be None");
         assert_eq!(
             actual_edge_storage_value,
-            Some(FieldElement::ZERO),
+            Some(Felt::ZERO),
             "edge case: value of nonexistant storage key but existant contract should return zero"
         );
         assert_eq!(actual_compiled_hash, None);

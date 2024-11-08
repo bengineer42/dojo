@@ -4,14 +4,14 @@ use katana_primitives::contract::{ContractAddress, Nonce, StorageKey, StorageVal
 use katana_primitives::env::{BlockEnv, CfgEnv};
 use katana_primitives::fee::TxFeeInfo;
 use katana_primitives::transaction::{ExecutableTxWithHash, TxWithHash};
-use katana_primitives::FieldElement;
+use katana_primitives::Felt;
 use katana_provider::traits::contract::ContractClassProvider;
 use katana_provider::traits::state::StateProvider;
 use katana_provider::ProviderResult;
 
 use crate::abstraction::{
-    BlockExecutor, EntryPointCall, ExecutionOutput, ExecutionResult, ExecutorExt, ExecutorFactory,
-    ExecutorResult, ResultAndStates, SimulationFlag,
+    BlockExecutor, EntryPointCall, ExecutionFlags, ExecutionOutput, ExecutionResult, ExecutorExt,
+    ExecutorFactory, ExecutorResult, ResultAndStates,
 };
 use crate::ExecutionError;
 
@@ -19,6 +19,7 @@ use crate::ExecutionError;
 #[derive(Debug, Default)]
 pub struct NoopExecutorFactory {
     cfg: CfgEnv,
+    execution_flags: ExecutionFlags,
 }
 
 impl NoopExecutorFactory {
@@ -53,6 +54,10 @@ impl ExecutorFactory for NoopExecutorFactory {
     fn cfg(&self) -> &CfgEnv {
         &self.cfg
     }
+
+    fn execution_flags(&self) -> &ExecutionFlags {
+        &self.execution_flags
+    }
 }
 
 #[derive(Debug, Default)]
@@ -64,7 +69,7 @@ impl ExecutorExt for NoopExecutor {
     fn simulate(
         &self,
         transactions: Vec<ExecutableTxWithHash>,
-        flags: SimulationFlag,
+        flags: ExecutionFlags,
     ) -> Vec<ResultAndStates> {
         let _ = transactions;
         let _ = flags;
@@ -74,14 +79,14 @@ impl ExecutorExt for NoopExecutor {
     fn estimate_fee(
         &self,
         transactions: Vec<ExecutableTxWithHash>,
-        flags: SimulationFlag,
+        flags: ExecutionFlags,
     ) -> Vec<Result<TxFeeInfo, ExecutionError>> {
         let _ = transactions;
         let _ = flags;
         vec![]
     }
 
-    fn call(&self, call: EntryPointCall) -> Result<Vec<FieldElement>, ExecutionError> {
+    fn call(&self, call: EntryPointCall) -> Result<Vec<Felt>, ExecutionError> {
         let _ = call;
         Ok(vec![])
     }

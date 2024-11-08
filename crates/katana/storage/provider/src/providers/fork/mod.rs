@@ -1,6 +1,7 @@
 pub mod backend;
 pub mod state;
 
+use std::collections::BTreeMap;
 use std::ops::{Range, RangeInclusive};
 use std::sync::Arc;
 
@@ -16,6 +17,7 @@ use katana_primitives::receipt::Receipt;
 use katana_primitives::state::{StateUpdates, StateUpdatesWithDeclaredClasses};
 use katana_primitives::trace::TxExecInfo;
 use katana_primitives::transaction::{Tx, TxHash, TxNumber, TxWithHash};
+use katana_primitives::Felt;
 use parking_lot::RwLock;
 use starknet::providers::jsonrpc::HttpTransport;
 use starknet::providers::JsonRpcClient;
@@ -36,6 +38,7 @@ use crate::traits::transaction::{
     ReceiptProvider, TransactionProvider, TransactionStatusProvider, TransactionTraceProvider,
     TransactionsProviderExt,
 };
+use crate::traits::trie::{ClassTrieWriter, ContractTrieWriter};
 use crate::ProviderResult;
 
 #[derive(Debug)]
@@ -410,7 +413,7 @@ impl StateRootProvider for ForkedProvider {
     fn state_root(
         &self,
         block_id: BlockHashOrNumber,
-    ) -> ProviderResult<Option<katana_primitives::FieldElement>> {
+    ) -> ProviderResult<Option<katana_primitives::Felt>> {
         let state_root = self.block_number_by_id(block_id)?.and_then(|num| {
             self.storage.read().block_headers.get(&num).map(|header| header.state_root)
         });
@@ -469,10 +472,10 @@ impl BlockWriter for ForkedProvider {
     ) -> ProviderResult<()> {
         let mut storage = self.storage.write();
 
-        let block_hash = block.block.header.hash;
-        let block_number = block.block.header.header.number;
+        let block_hash = block.block.hash;
+        let block_number = block.block.header.number;
 
-        let block_header = block.block.header.header;
+        let block_header = block.block.header;
         let txs = block.block.body;
 
         // create block body indices
@@ -576,8 +579,33 @@ impl BlockEnvProvider for ForkedProvider {
         Ok(self.header(block_id)?.map(|header| BlockEnv {
             number: header.number,
             timestamp: header.timestamp,
-            l1_gas_prices: header.gas_prices,
+            l1_gas_prices: header.l1_gas_prices,
+            l1_data_gas_prices: header.l1_data_gas_prices,
             sequencer_address: header.sequencer_address,
         }))
+    }
+}
+
+impl ClassTrieWriter for ForkedProvider {
+    fn insert_updates(
+        &self,
+        block_number: BlockNumber,
+        updates: &BTreeMap<ClassHash, CompiledClassHash>,
+    ) -> ProviderResult<Felt> {
+        let _ = block_number;
+        let _ = updates;
+        Ok(Felt::ZERO)
+    }
+}
+
+impl ContractTrieWriter for ForkedProvider {
+    fn insert_updates(
+        &self,
+        block_number: BlockNumber,
+        state_updates: &StateUpdates,
+    ) -> ProviderResult<Felt> {
+        let _ = block_number;
+        let _ = state_updates;
+        Ok(Felt::ZERO)
     }
 }
