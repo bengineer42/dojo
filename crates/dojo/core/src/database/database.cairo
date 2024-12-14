@@ -137,7 +137,7 @@ pub impl DatabaseImpl<D, +DatabaseInterface<D>, +Drop<D>, +Copy<D>> of DatabaseT
         for value in values {
             serialized_values.append(serialize_inline(value));
         };
-        self.write_entities(table, ids, serialized_values.span(), Introspect::<V>::layout())
+        self.write_entities(table, ids, serialized_values, Introspect::<V>::layout())
     }
 
     fn write_table_entry<E, +Drop<E>, +Serde<E>, +Introspect<E>>(
@@ -168,7 +168,7 @@ pub impl DatabaseImpl<D, +DatabaseInterface<D>, +Drop<D>, +Copy<D>> of DatabaseT
 
 pub impl TableImpl<D, +DatabaseTrait<D>> of TableTrait<Table<D>> {
     fn new<D>(database: D, selector: felt252) -> Table<D> {
-        Table { database: database, selector: selector, }
+        Table { database, selector, }
     }
 
     fn read_value<V, +Serde<V>, +Introspect<V>>(self: @Table<D>, id: felt252) -> V {
