@@ -8,6 +8,12 @@ pub mod contract {
     }
 }
 
+pub mod database {
+    pub mod database;
+    pub mod entry;
+    pub use database::{DatabaseTrait, TableTrait, Table, TableImpl, DatabaseInterface};
+}
+
 pub mod event {
     pub mod component;
 
@@ -55,6 +61,9 @@ pub mod model {
 
     pub mod storage;
     pub use storage::{ModelStorage, ModelStorageTest, ModelValueStorage, ModelValueStorageTest,};
+
+
+    pub mod schema;
 }
 
 pub mod storage {
@@ -103,6 +112,12 @@ pub mod world {
     mod world_contract;
     pub use world_contract::world;
 
+    pub mod database;
+
     pub mod storage;
     pub use storage::{WorldStorage, WorldStorageTrait};
+}
+
+pub mod local {
+    pub mod database;
 }
