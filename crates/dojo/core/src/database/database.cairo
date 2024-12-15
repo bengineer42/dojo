@@ -1,5 +1,5 @@
 use dojo::{
-    meta::{SchemaTrait, Schema},
+    meta::{Introspect, SchemaTrait, Schema},
     utils::{deserialize_unwrap, serialize_inline, serialize_multiple, deserialize_multiple},
     database::{
         DatabaseTable,
@@ -132,19 +132,19 @@ pub impl DatabaseImpl<D, +DatabaseInterface<D>, +Drop<D>, +Copy<D>> of DatabaseT
         deserialize_multiple(self.read_entities(table, indexes, SchemaTrait::<S>::schema()))
     }
 
-    fn read_table_entry<E, +Serde<E>, +SchemaTrait<E>>(
+    fn read_table_entry<E, +Serde<E>, +Introspect<E>>(
         self: @D, table: felt252, index: felt252
     ) -> E {
         index_value_to_entry(
-            index, self.read_entity(table, index, entry::EntitySchemaImpl::<E>::schema()))
+            index, self.read_entity(table, index, entry::EntitySchemaImpl::<E>::schema())
         )
     }
 
-    fn read_table_entries<E, +Drop<E>, +Serde<E>, +SchemaTrait<E>>(
+    fn read_table_entries<E, +Drop<E>, +Serde<E>, +Introspect<E>>(
         self: @D, table: felt252, indexes: Span<felt252>
     ) -> Array<E> {
         indexes_values_to_entries(
-            indexes, self.read_entities(table, indexes, entry_layout(SchemaTrait::<E>::schema()))
+            indexes, self.read_entities(table, indexes, entry::EntitySchemaImpl::<E>::schema())
         )
     }
 
@@ -160,18 +160,18 @@ pub impl DatabaseImpl<D, +DatabaseInterface<D>, +Drop<D>, +Copy<D>> of DatabaseT
         self.write_entities(table, indexes, serialize_multiple(values), SchemaTrait::<S>::schema())
     }
 
-    fn write_table_entry<E, +Drop<E>, +Serde<E>, +SchemaTrait<E>>(
+    fn write_table_entry<E, +Drop<E>, +Serde<E>, +Introspect<E>>(
         ref self: D, table: felt252, entry: @E
     ) {
         let (index, values) = entry_to_id_values(entry);
-        self.write_entity(table, index, values, entry_layout(SchemaTrait::<E>::schema()))
+        self.write_entity(table, index, values, entry::EntitySchemaImpl::<E>::schema())
     }
 
-    fn write_table_entries<E, +Drop<E>, +Serde<E>, +SchemaTrait<E>>(
+    fn write_table_entries<E, +Drop<E>, +Serde<E>, +Introspect<E>>(
         ref self: D, table: felt252, entries: Span<E>
     ) {
         let (indexes, values) = entries_to_ids_values(entries);
-        self.write_entities(table, indexes, values, entry_layout(SchemaTrait::<E>::schema()))
+        self.write_entities(table, indexes, values, entry::EntitySchemaImpl::<E>::schema())
     }
 
     fn to_table(self: @D, table: felt252) -> DatabaseTable<D> {
@@ -195,23 +195,21 @@ pub impl TableImpl<D, +DatabaseInterface<D>, +Drop<D>, +Copy<D>> of TableTrait<D
         )
     }
 
-    fn read_entry<E, +Serde<E>, +SchemaTrait<E>>(self: @DatabaseTable<D>, index: felt252) -> E {
+    fn read_entry<E, +Serde<E>, +Introspect<E>>(self: @DatabaseTable<D>, index: felt252) -> E {
         index_value_to_entry(
             index,
-            self
-                .database
-                .read_entity(*self.selector, index, entry_layout(SchemaTrait::<E>::schema()))
+            self.database.read_entity(*self.selector, index, entry::EntitySchemaImpl::<E>::schema())
         )
     }
 
-    fn read_entries<E, +Drop<E>, +Serde<E>, +SchemaTrait<E>>(
+    fn read_entries<E, +Drop<E>, +Serde<E>, +Introspect<E>>(
         self: @DatabaseTable<D>, indexes: Span<felt252>
     ) -> Array<E> {
         indexes_values_to_entries(
             indexes,
             self
                 .database
-                .read_entities(*self.selector, indexes, entry_layout(SchemaTrait::<E>::schema()))
+                .read_entities(*self.selector, indexes, entry::EntitySchemaImpl::<E>::schema())
         )
     }
 
@@ -233,22 +231,19 @@ pub impl TableImpl<D, +DatabaseInterface<D>, +Drop<D>, +Copy<D>> of TableTrait<D
             )
     }
 
-    fn write_entry<E, +Drop<E>, +Serde<E>, +SchemaTrait<E>>(ref self: DatabaseTable<D>, entry: @E) {
+    fn write_entry<E, +Drop<E>, +Serde<E>, +Introspect<E>>(ref self: DatabaseTable<D>, entry: @E) {
         let (index, values) = entry_to_id_values(entry);
         let mut database = self.database;
-        database
-            .write_entity(self.selector, index, values, entry_layout(SchemaTrait::<E>::schema()))
+        database.write_entity(self.selector, index, values, entry::EntitySchemaImpl::<E>::schema())
     }
 
-    fn write_entries<E, +Drop<E>, +Serde<E>, +SchemaTrait<E>>(
+    fn write_entries<E, +Drop<E>, +Serde<E>, +Introspect<E>>(
         ref self: DatabaseTable<D>, entries: Span<E>
     ) {
         let (indexes, values) = entries_to_ids_values(entries);
         let mut database = self.database;
         database
-            .write_entities(
-                self.selector, indexes, values, entry_layout(SchemaTrait::<E>::schema())
-            )
+            .write_entities(self.selector, indexes, values, entry::EntitySchemaImpl::<E>::schema())
     }
 
     fn selector(self: @DatabaseTable<D>) -> felt252 {

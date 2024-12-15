@@ -1,4 +1,4 @@
-use dojo::meta::{Layout, layout::Schema};
+use dojo::meta::{Layout};
 use dojo::storage::packing;
 
 #[derive(Copy, Drop, Serde, Debug, PartialEq)]
@@ -11,6 +11,7 @@ pub enum Ty {
     // And `Box` is not serializable. So using a Span, even if it's to have
     // one element, does the trick.
     Array: Span<Ty>,
+    FixedArray: Span<(u32, Ty)>,
     ByteArray,
 }
 
@@ -66,18 +67,6 @@ pub trait Introspect<T> {
     fn ty() -> Ty;
 }
 
-pub trait SchemaTrait<T> {
-    fn schema() -> Schema;
-}
-
-impl SchemaImpl<T, +Introspect<T>> of SchemaTrait<T> {
-    fn schema() -> Schema {
-        match Introspect::<T>::layout() {
-            Layout::Struct(fields) => { fields },
-            _ => panic!("Unexpected model layout")
-        }
-    }
-}
 
 pub impl Introspect_felt252 of Introspect<felt252> {
     fn size() -> Option<usize> {

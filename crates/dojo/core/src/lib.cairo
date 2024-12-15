@@ -47,10 +47,13 @@ pub mod meta {
     };
 
     pub mod introspect;
-    pub use introspect::{Introspect, Ty, StructCompareTrait, SchemaTrait,};
+    pub use introspect::{Introspect, Ty, StructCompareTrait};
 
     pub mod layout;
-    pub use layout::{Layout, FieldLayout, LayoutCompareTrait, Schema};
+    pub use layout::{Layout, FieldLayout, LayoutCompareTrait};
+
+    pub mod schema;
+    pub use schema::{SchemaTrait, Schema};
 }
 
 // pub mod model {
