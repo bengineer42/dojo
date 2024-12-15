@@ -11,6 +11,7 @@ pub mod contract {
 pub mod database {
     pub mod database;
     pub mod entry;
+    pub mod publisher;
     pub use database::{DatabaseTrait, TableTrait, Table, TableImpl, DatabaseInterface};
 }
 
@@ -91,7 +92,7 @@ pub mod utils {
     pub use naming::is_name_valid;
 
     pub mod serde;
-    pub use serde::{serialize_inline, deserialize_unwrap};
+    pub use serde::{serialize_inline, deserialize_unwrap, serialize_multiple, deserialize_multiple};
 }
 
 pub mod world {
