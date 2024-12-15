@@ -117,6 +117,8 @@ pub mod world {
 
     pub mod storage;
     pub use storage::{WorldStorage, WorldStorageTrait};
+
+    pub mod publisher;
 }
 
 pub mod local {

@@ -1,8 +1,7 @@
 //! A simple storage abstraction for the world's storage.
 
 use dojo::{
-    meta::{Introspect, Layout}, utils::{serialize_inline, deserialize_unwrap},
-    world::{IWorldDispatcher, IWorldDispatcherTrait}, database::DatabaseInterface,
+    meta::Layout, world::{IWorldDispatcher, IWorldDispatcherTrait}, database::DatabaseInterface,
     model::ModelIndex,
 };
 
