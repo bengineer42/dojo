@@ -1,11 +1,12 @@
 pub mod contract {
-    pub mod interface;
-    pub use interface::{IContract, IContractDispatcher, IContractDispatcherTrait};
+    // pub mod interface;
+    // pub use interface::{IContract, IContractDispatcher, IContractDispatcherTrait};
 
-    pub mod components {
-        pub mod upgradeable;
-        pub mod world_provider;
-    }
+    // pub mod components {
+    //     pub mod upgradeable;
+    //     pub mod world_provider;
+    // }
+    pub mod contract;
 }
 
 pub mod database {
@@ -14,20 +15,28 @@ pub mod database {
     pub mod publisher;
     pub use database::{DatabaseTrait, TableTrait, TableImpl, DatabaseInterface};
     pub mod table;
+    pub mod interface;
+    pub mod local;
+    pub mod external;
+    // pub mod namespaced;
+    pub use interface::{
+        IDatabase, IDatabaseDispatcher, IDatabaseDispatcherTrait, IPublisher, IPublisherDispatcher,
+        IPublisherDispatcherTrait
+    };
     pub use table::{DatabaseTable, Table};
 }
 
 pub mod event {
-    pub mod component;
+    //     pub mod component;
 
-    pub mod event;
-    pub use event::{Event, EventDefinition, EventDef};
+    //     pub mod event;
+    //     pub use event::{Event, EventDefinition, EventDef};
 
-    pub mod interface;
-    pub use interface::{IEvent, IEventDispatcher, IEventDispatcherTrait};
+    //     pub mod interface;
+    //     pub use interface::{IEvent, IEventDispatcher, IEventDispatcherTrait};
 
     pub mod storage;
-    pub use storage::{EventStorage, EventStorageTest};
+    //     pub use storage::{EventStorage, EventStorageTest};
 }
 
 pub mod meta {
@@ -38,33 +47,33 @@ pub mod meta {
     };
 
     pub mod introspect;
-    pub use introspect::{Introspect, Ty, StructCompareTrait};
+    pub use introspect::{Introspect, Ty, StructCompareTrait, SchemaTrait,};
 
     pub mod layout;
-    pub use layout::{Layout, FieldLayout, LayoutCompareTrait};
+    pub use layout::{Layout, FieldLayout, LayoutCompareTrait, Schema};
 }
 
-pub mod model {
-    pub mod component;
+// pub mod model {
+//     pub mod component;
 
-    pub mod definition;
-    pub use definition::{ModelIndex, ModelDefinition, ModelDef};
+//     pub mod definition;
+//     pub use definition::{ModelIndex, ModelDefinition, ModelDef};
 
-    pub mod model;
-    pub use model::{Model, KeyParser, ModelPtr, ModelPtrsTrait};
+//     pub mod model;
+//     pub use model::{Model, KeyParser, ModelPtr, ModelPtrsTrait};
 
-    pub mod model_value;
-    pub use model_value::{ModelValue, ModelValueKey};
+//     pub mod model_value;
+//     pub use model_value::{ModelValue, ModelValueKey};
 
-    pub mod interface;
-    pub use interface::{IModel, IModelDispatcher, IModelDispatcherTrait};
+//     pub mod interface;
+//     pub use interface::{IModel, IModelDispatcher, IModelDispatcherTrait};
 
-    pub mod metadata;
-    pub use metadata::ResourceMetadata;
+//     pub mod metadata;
+//     pub use metadata::ResourceMetadata;
 
-    pub mod storage;
-    pub use storage::{ModelStorage, ModelStorageTest, ModelValueStorage, ModelValueStorageTest,};
-}
+//     pub mod storage;
+//     pub use storage::{ModelStorage, ModelStorageTest, ModelValueStorage, ModelValueStorageTest,};
+// }
 
 pub mod storage {
     pub mod database;
@@ -94,32 +103,39 @@ pub mod utils {
     pub use serde::{serialize_inline, deserialize_unwrap, serialize_multiple, deserialize_multiple};
 }
 
-pub mod world {
-    pub(crate) mod errors;
+// pub mod world {
+//     pub(crate) mod errors;
 
-    mod resource;
-    pub use resource::{Resource, ResourceIsNoneTrait};
+//     mod resource;
+//     pub use resource::{Resource, ResourceIsNoneTrait};
 
-    mod iworld;
-    pub use iworld::{
-        IWorld, IWorldDispatcher, IWorldDispatcherTrait, IUpgradeableWorld,
-        IUpgradeableWorldDispatcher, IUpgradeableWorldDispatcherTrait
-    };
+//     mod iworld;
+//     pub use iworld::{
+//         IWorld, IWorldDispatcher, IWorldDispatcherTrait, IUpgradeableWorld,
+//         IUpgradeableWorldDispatcher, IUpgradeableWorldDispatcherTrait
+//     };
 
-    #[cfg(target: "test")]
-    pub use iworld::{IWorldTest, IWorldTestDispatcher, IWorldTestDispatcherTrait};
+//     #[cfg(target: "test")]
+//     pub use iworld::{IWorldTest, IWorldTestDispatcher, IWorldTestDispatcherTrait};
 
-    mod world_contract;
-    pub use world_contract::world;
+//     mod world_contract;
+//     pub use world_contract::world;
 
-    pub mod database;
+//     pub mod database;
 
-    pub mod storage;
-    pub use storage::{WorldStorage, WorldStorageTrait};
+//     pub mod storage;
+//     pub use storage::{WorldStorage, WorldStorageTrait};
 
-    pub mod publisher;
-}
+//     pub mod publisher;
+// }
 
-pub mod local {
-    pub mod database;
+// pub mod local {
+//     pub mod database;
+// }
+
+pub mod permissions {
+    pub mod interface;
+    pub mod permissions;
+
+    use interface::{IPermissions, IPermissionsDispatcher, IPermissionsDispatcherTrait};
 }

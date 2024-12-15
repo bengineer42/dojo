@@ -1,4 +1,4 @@
-use dojo::meta::Layout;
+use dojo::meta::{Layout, layout::Schema};
 use dojo::storage::packing;
 
 #[derive(Copy, Drop, Serde, Debug, PartialEq)]
@@ -64,6 +64,19 @@ pub trait Introspect<T> {
     fn size() -> Option<usize>;
     fn layout() -> Layout;
     fn ty() -> Ty;
+}
+
+pub trait SchemaTrait<T> {
+    fn schema() -> Schema;
+}
+
+impl SchemaImpl<T, +Introspect<T>> of SchemaTrait<T> {
+    fn schema() -> Schema {
+        match Introspect::<T>::layout() {
+            Layout::Struct(fields) => { fields },
+            _ => panic!("Unexpected model layout")
+        }
+    }
 }
 
 pub impl Introspect_felt252 of Introspect<felt252> {
@@ -310,3 +323,4 @@ pub impl Introspect_span<T, +Introspect<T>> of Introspect<Span<T>> {
         Ty::Array([Introspect::<T>::ty()].span())
     }
 }
+

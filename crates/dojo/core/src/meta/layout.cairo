@@ -22,6 +22,9 @@ pub enum Layout {
     Enum: Span<FieldLayout>,
 }
 
+type Schema = Span<FieldLayout>;
+
+
 #[generate_trait]
 pub impl LayoutCompareImpl of LayoutCompareTrait {
     fn is_same_type_of(self: @Layout, old: @Layout) -> bool {
@@ -48,3 +51,27 @@ pub fn compute_packed_size(layout: Layout) -> Option<usize> {
         Option::None
     }
 }
+
+trait GetSelectors<T> {
+    fn get_selectors(self: @T) -> Span<felt252>;
+}
+
+impl LayoutStructImpl of GetSelectors<Layout> {
+    fn get_selectors(self: @Layout) -> Span<felt252> {
+        match self {
+            Layout::Struct(fields) => { fields.get_selectors() },
+            _ => panic!("Unexpected model layout")
+        }
+    }
+}
+
+impl FieldLayoutsImpl of GetSelectors<Schema> {
+    fn get_selectors(self: @Schema) -> Span<felt252> {
+        let mut selectors = ArrayTrait::<felt252>::new();
+        for field in *self {
+            selectors.append(*field.selector);
+        };
+        selectors.span()
+    }
+}
+

@@ -39,7 +39,7 @@ pub trait PublisherTrait<P> {
     );
 
     /// Convert to a table.
-    fn to_table(self: @P, selector: felt252) -> Table<P>;
+    fn to_table(self: @P, selector: felt252) -> DatabaseTable<P>;
 }
 
 /// Publish to a table without writing to the database.
@@ -86,37 +86,39 @@ pub impl PublisherImpl<P, +PublisherInterface<P>, +Drop<P>, +Copy<P>> of Publish
         self.set_entities(table, ids, values, entry_layout(Introspect::<E>::layout()));
     }
 
-    fn to_table(self: @P, selector: felt252) -> Table<P> {
-        Table { database: *self, selector, }
+    fn to_table(self: @P, selector: felt252) -> DatabaseTable<P> {
+        DatabaseTable { database: *self, selector, }
     }
 }
 
 pub impl TablePublisherImpl<
     P, +PublisherInterface<P>, +Copy<P>, +Drop<P>
-> of TablePublisherTrait<Table<P>> {
+> of TablePublisherTrait<DatabaseTable<P>> {
     fn set_value<V, +Serde<V>, +Introspect<V>>(
-        ref self: Table<P>, table: felt252, id: felt252, value: @V
+        ref self: DatabaseTable<P>, table: felt252, id: felt252, value: @V
     ) {
         let mut database = self.database;
         database.set_entity(self.selector, id, serialize_inline(value), Introspect::<V>::layout())
     }
 
     fn set_values<V, +Serde<V>, +Introspect<V>>(
-        ref self: Table<P>, table: felt252, ids: Span<felt252>, values: Span<V>
+        ref self: DatabaseTable<P>, table: felt252, ids: Span<felt252>, values: Span<V>
     ) {
         let mut database = self.database;
         database
             .set_entities(self.selector, ids, serialize_multiple(values), Introspect::<V>::layout())
     }
 
-    fn set_entry<E, +Serde<E>, +Introspect<E>>(ref self: Table<P>, table: felt252, entry: @E) {
+    fn set_entry<E, +Serde<E>, +Introspect<E>>(
+        ref self: DatabaseTable<P>, table: felt252, entry: @E
+    ) {
         let mut database = self.database;
         let (id, values) = entry_to_id_values(entry);
         database.set_entity(self.selector, id, values, entry_layout(Introspect::<E>::layout()));
     }
 
     fn set_entries<E, +Drop<E>, +Serde<E>, +Introspect<E>>(
-        ref self: Table<P>, table: felt252, entries: Span<E>
+        ref self: DatabaseTable<P>, table: felt252, entries: Span<E>
     ) {
         let mut database = self.database;
         let (ids, values) = entries_to_ids_values(entries);
