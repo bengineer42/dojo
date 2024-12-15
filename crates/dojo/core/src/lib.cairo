@@ -12,7 +12,9 @@ pub mod database {
     pub mod database;
     pub mod entry;
     pub mod publisher;
-    pub use database::{DatabaseTrait, TableTrait, Table, TableImpl, DatabaseInterface};
+    pub use database::{DatabaseTrait, TableTrait, TableImpl, DatabaseInterface};
+    pub mod table;
+    pub use table::{DatabaseTable, Table};
 }
 
 pub mod event {
@@ -62,9 +64,6 @@ pub mod model {
 
     pub mod storage;
     pub use storage::{ModelStorage, ModelStorageTest, ModelValueStorage, ModelValueStorageTest,};
-
-
-    pub mod schema;
 }
 
 pub mod storage {

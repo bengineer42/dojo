@@ -1,11 +1,15 @@
 use dojo::{
     meta::{Introspect, Layout},
     utils::{deserialize_unwrap, serialize_inline, serialize_multiple, deserialize_multiple},
-    database::entry::{
-        entry_layout, id_values_to_entry, ids_values_to_entries, entry_to_id_values,
-        entries_to_ids_values
+    database::{
+        DatabaseTable,
+        entry::{
+            entry_layout, id_values_to_entry, ids_values_to_entries, entry_to_id_values,
+            entries_to_ids_values
+        }
     },
 };
+
 
 pub trait DatabaseInterface<D> {
     /// Read an entity with a layout from a table in database.
@@ -72,7 +76,7 @@ pub trait DatabaseTrait<D> {
     );
 
     /// Convert a database to a table with selector being the selector for the table.
-    fn to_table(self: @D, table: felt252) -> Table<D>;
+    fn to_table(self: @D, table: felt252) -> DatabaseTable<D>;
 }
 
 
@@ -110,11 +114,6 @@ pub trait TableTrait<T> {
     fn selector(self: @T) -> felt252;
 }
 
-#[derive(Drop, Copy)]
-pub struct Table<D> {
-    pub database: D,
-    pub selector: felt252,
-}
 
 pub impl DatabaseImpl<D, +DatabaseInterface<D>, +Drop<D>, +Copy<D>> of DatabaseTrait<D> {
     fn read_table_value<S, +Serde<S>, +Introspect<S>>(self: @D, table: felt252, id: felt252) -> S {
@@ -165,26 +164,26 @@ pub impl DatabaseImpl<D, +DatabaseInterface<D>, +Drop<D>, +Copy<D>> of DatabaseT
         self.write_entities(table, ids, values, entry_layout(Introspect::<E>::layout()))
     }
 
-    fn to_table(self: @D, table: felt252) -> Table<D> {
-        Table { database: *self, selector: table, }
+    fn to_table(self: @D, table: felt252) -> DatabaseTable<D> {
+        DatabaseTable { database: *self, selector: table, }
     }
 }
 
 
-pub impl TableImpl<D, +DatabaseInterface<D>, +Drop<D>, +Copy<D>> of TableTrait<Table<D>> {
-    fn read_value<S, +Serde<S>, +Introspect<S>>(self: @Table<D>, id: felt252) -> S {
+pub impl TableImpl<D, +DatabaseInterface<D>, +Drop<D>, +Copy<D>> of TableTrait<DatabaseTable<D>> {
+    fn read_value<S, +Serde<S>, +Introspect<S>>(self: @DatabaseTable<D>, id: felt252) -> S {
         deserialize_unwrap(self.database.read_entity(*self.selector, id, Introspect::<S>::layout()))
     }
 
     fn read_values<S, +Drop<S>, +Serde<S>, +Introspect<S>>(
-        self: @Table<D>, ids: Span<felt252>
+        self: @DatabaseTable<D>, ids: Span<felt252>
     ) -> Array<S> {
         deserialize_multiple(
             self.database.read_entities(*self.selector, ids, Introspect::<S>::layout())
         )
     }
 
-    fn read_entry<E, +Serde<E>, +Introspect<E>>(self: @Table<D>, id: felt252) -> E {
+    fn read_entry<E, +Serde<E>, +Introspect<E>>(self: @DatabaseTable<D>, id: felt252) -> E {
         id_values_to_entry(
             id,
             self.database.read_entity(*self.selector, id, entry_layout(Introspect::<E>::layout()))
@@ -192,7 +191,7 @@ pub impl TableImpl<D, +DatabaseInterface<D>, +Drop<D>, +Copy<D>> of TableTrait<T
     }
 
     fn read_entries<E, +Drop<E>, +Serde<E>, +Introspect<E>>(
-        self: @Table<D>, ids: Span<felt252>
+        self: @DatabaseTable<D>, ids: Span<felt252>
     ) -> Array<E> {
         ids_values_to_entries(
             ids,
@@ -203,14 +202,14 @@ pub impl TableImpl<D, +DatabaseInterface<D>, +Drop<D>, +Copy<D>> of TableTrait<T
     }
 
     fn write_value<S, +Drop<S>, +Serde<S>, +Introspect<S>>(
-        ref self: Table<D>, id: felt252, value: @S
+        ref self: DatabaseTable<D>, id: felt252, value: @S
     ) {
         let mut database = self.database;
         database.write_entity(self.selector, id, serialize_inline(value), Introspect::<S>::layout())
     }
 
     fn write_values<S, +Drop<S>, +Serde<S>, +Introspect<S>>(
-        ref self: Table<D>, ids: Span<felt252>, values: Span<S>
+        ref self: DatabaseTable<D>, ids: Span<felt252>, values: Span<S>
     ) {
         let mut database = self.database;
         database
@@ -219,19 +218,21 @@ pub impl TableImpl<D, +DatabaseInterface<D>, +Drop<D>, +Copy<D>> of TableTrait<T
             )
     }
 
-    fn write_entry<E, +Drop<E>, +Serde<E>, +Introspect<E>>(ref self: Table<D>, entry: @E) {
+    fn write_entry<E, +Drop<E>, +Serde<E>, +Introspect<E>>(ref self: DatabaseTable<D>, entry: @E) {
         let (id, values) = entry_to_id_values(entry);
         let mut database = self.database;
         database.write_entity(self.selector, id, values, entry_layout(Introspect::<E>::layout()))
     }
 
-    fn write_entries<E, +Drop<E>, +Serde<E>, +Introspect<E>>(ref self: Table<D>, entries: Span<E>) {
+    fn write_entries<E, +Drop<E>, +Serde<E>, +Introspect<E>>(
+        ref self: DatabaseTable<D>, entries: Span<E>
+    ) {
         let (ids, values) = entries_to_ids_values(entries);
         let mut database = self.database;
         database.write_entities(self.selector, ids, values, entry_layout(Introspect::<E>::layout()))
     }
 
-    fn selector(self: @Table<D>) -> felt252 {
+    fn selector(self: @DatabaseTable<D>) -> felt252 {
         *self.selector
     }
 }

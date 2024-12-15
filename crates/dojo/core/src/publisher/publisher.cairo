@@ -1,6 +1,6 @@
 use dojo::{
     meta::{Introspect, Layout}, utils::{serialize_inline, serialize_multiple},
-    database::{entry::{entry_layout, entry_to_id_values, entries_to_ids_values}, DatabaseTable}
+    database::{entry::{entry_layout, entry_to_id_values, entries_to_ids_values}, Table}
 };
 
 /// Interface to publish entities without writing to the database.
