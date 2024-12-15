@@ -3,9 +3,12 @@ use dojo::{
     database::{entry::{entry_layout, entry_to_id_values, entries_to_ids_values}, Table}
 };
 
+/// Interface to publish entities without writing to the database.
 pub trait PublisherInterface<P> {
+    /// Set an entity with a layout.
     fn set_entity(ref self: P, table: felt252, id: felt252, values: Span<felt252>, layout: Layout);
 
+    /// Set multiple entities with a layout.
     fn set_entities(
         ref self: P,
         table: felt252,
@@ -15,33 +18,43 @@ pub trait PublisherInterface<P> {
     );
 }
 
-
+/// Publish with a schema without writing to the database.
 pub trait PublisherTrait<P> {
+    /// Set a value with a schema.
     fn set_table_value<V, +Serde<V>, +Introspect<V>>(
         ref self: P, table: felt252, id: felt252, value: @V
     );
 
+    /// Set multiple values with a schema.
     fn set_table_values<V, +Serde<V>, +Introspect<V>>(
         ref self: P, table: felt252, ids: Span<felt252>, values: Span<V>
     );
 
+    /// Set an entry with a schema.
     fn set_table_entry<E, +Serde<E>, +Introspect<E>>(ref self: P, table: felt252, entry: @E);
 
+    /// Set multiple entries with a schema.
     fn set_table_entries<E, +Drop<E>, +Serde<E>, +Introspect<E>>(
         ref self: P, table: felt252, entries: Span<E>
     );
 
+    /// Convert to a table.
     fn to_table(self: @P, selector: felt252) -> Table<P>;
 }
 
+/// Publish to a table without writing to the database.
 pub trait TablePublisherTrait<T> {
+    /// Set a value with a schema.
     fn set_value<V, +Serde<V>, +Introspect<V>>(ref self: T, table: felt252, id: felt252, value: @V);
 
+    /// Set multiple values with a schema.
     fn set_values<V, +Serde<V>, +Introspect<V>>(
         ref self: T, table: felt252, ids: Span<felt252>, values: Span<V>
     );
 
+    /// Set an entry with a schema.
     fn set_entry<E, +Serde<E>, +Introspect<E>>(ref self: T, table: felt252, entry: @E);
+
 
     fn set_entries<E, +Drop<E>, +Serde<E>, +Introspect<E>>(
         ref self: T, table: felt252, entries: Span<E>
