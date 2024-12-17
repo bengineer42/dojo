@@ -1,7 +1,6 @@
 use dojo::model::{Model, ModelValue, ModelStorage, ModelValueStorage};
 use dojo::world::WorldStorage;
 use dojo_cairo_test::{spawn_test_world, NamespaceDef, TestResource};
-
 #[derive(Copy, Drop, Serde, Debug)]
 #[dojo::model]
 struct Foo {
@@ -25,7 +24,7 @@ struct Foo2 {
     v2: u32
 }
 
-#[derive(Copy, Drop, Serde, Debug, Introspect)]
+#[derive(Copy, Drop, Serde, Debug, IntrospectPacked)]
 struct AStruct {
     a: u8,
     b: u8,

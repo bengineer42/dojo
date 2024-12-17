@@ -1,4 +1,3 @@
-use core::serde::Serde;
 use starknet::{SyscallResultTrait, syscalls::{emit_event_syscall}};
 use dojo::utils::serialize_inline;
 
