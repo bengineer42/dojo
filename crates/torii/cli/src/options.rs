@@ -2,10 +2,10 @@ use std::net::{IpAddr, Ipv4Addr};
 use std::str::FromStr;
 
 use anyhow::Context;
-use clap::ArgAction;
+use serde::ser::SerializeSeq;
 use serde::{Deserialize, Serialize};
 use starknet::core::types::Felt;
-use torii_core::types::{Contract, ContractType};
+use torii_sqlite::types::{Contract, ContractType};
 
 pub const DEFAULT_HTTP_ADDR: IpAddr = IpAddr::V4(Ipv4Addr::LOCALHOST);
 pub const DEFAULT_HTTP_PORT: u16 = 8080;
@@ -60,6 +60,7 @@ pub struct RelayOptions {
         help = "Path to a local identity key file. If not specified, a new identity will be \
                 generated."
     )]
+    #[serde(default)]
     pub local_key_path: Option<String>,
 
     /// Path to a local certificate file. If not specified, a new certificate will be generated
@@ -70,6 +71,7 @@ pub struct RelayOptions {
         help = "Path to a local certificate file. If not specified, a new certificate will be \
                 generated for WebRTC connections."
     )]
+    #[serde(default)]
     pub cert_path: Option<String>,
 }
 
@@ -99,8 +101,13 @@ pub struct IndexingOptions {
     pub blocks_chunk_size: u64,
 
     /// Enable indexing pending blocks
-    #[arg(long = "indexing.pending", action = ArgAction::Set, default_value_t = true, help = "Whether or not to index pending blocks.")]
-    pub index_pending: bool,
+    #[arg(
+        long = "indexing.pending",
+        default_value_t = true,
+        help = "Whether or not to index pending blocks."
+    )]
+    #[serde(default)]
+    pub pending: bool,
 
     /// Polling interval in ms
     #[arg(
@@ -123,11 +130,11 @@ pub struct IndexingOptions {
     /// Whether or not to index world transactions
     #[arg(
         long = "indexing.transactions",
-        action = ArgAction::Set,
         default_value_t = false,
         help = "Whether or not to index world transactions and keep them in the database."
     )]
-    pub index_transactions: bool,
+    #[serde(default)]
+    pub transactions: bool,
 
     /// ERC contract addresses to index
     #[arg(
@@ -137,7 +144,32 @@ pub struct IndexingOptions {
         help = "ERC contract addresses to index. You may only specify ERC20 or ERC721 contracts."
     )]
     #[serde(deserialize_with = "deserialize_contracts")]
+    #[serde(serialize_with = "serialize_contracts")]
+    #[serde(default)]
     pub contracts: Vec<Contract>,
+
+    /// Namespaces to index
+    #[arg(
+        long = "indexing.namespaces",
+        value_delimiter = ',',
+        help = "The namespaces of the world that torii should index. If empty, all namespaces \
+                will be indexed."
+    )]
+    #[serde(default)]
+    pub namespaces: Vec<String>,
+
+    /// The block number to start indexing the world from.
+    ///
+    /// Warning: In the current implementation, this will break the indexing of tokens, if any.
+    /// Since the tokens require the chain to be indexed from the beginning, to ensure correct
+    /// balance updates.
+    #[arg(
+        long = "indexing.world_block",
+        help = "The block number to start indexing from.",
+        default_value_t = 0
+    )]
+    #[serde(default)]
+    pub world_block: u64,
 }
 
 impl Default for IndexingOptions {
@@ -145,20 +177,69 @@ impl Default for IndexingOptions {
         Self {
             events_chunk_size: DEFAULT_EVENTS_CHUNK_SIZE,
             blocks_chunk_size: DEFAULT_BLOCKS_CHUNK_SIZE,
-            index_pending: true,
-            index_transactions: false,
+            pending: true,
+            transactions: false,
             contracts: vec![],
             polling_interval: DEFAULT_POLLING_INTERVAL,
             max_concurrent_tasks: DEFAULT_MAX_CONCURRENT_TASKS,
+            namespaces: vec![],
+            world_block: 0,
         }
     }
 }
 
-#[derive(Debug, clap::Args, Clone, Serialize, Deserialize, PartialEq)]
+impl IndexingOptions {
+    pub fn merge(&mut self, other: Option<&Self>) {
+        if let Some(other) = other {
+            if self.events_chunk_size == DEFAULT_EVENTS_CHUNK_SIZE {
+                self.events_chunk_size = other.events_chunk_size;
+            }
+
+            if self.blocks_chunk_size == DEFAULT_BLOCKS_CHUNK_SIZE {
+                self.blocks_chunk_size = other.blocks_chunk_size;
+            }
+
+            if !self.pending {
+                self.pending = other.pending;
+            }
+
+            if self.polling_interval == DEFAULT_POLLING_INTERVAL {
+                self.polling_interval = other.polling_interval;
+            }
+
+            if self.max_concurrent_tasks == DEFAULT_MAX_CONCURRENT_TASKS {
+                self.max_concurrent_tasks = other.max_concurrent_tasks;
+            }
+
+            if !self.transactions {
+                self.transactions = other.transactions;
+            }
+
+            if self.contracts.is_empty() {
+                self.contracts = other.contracts.clone();
+            }
+
+            if self.namespaces.is_empty() {
+                self.namespaces = other.namespaces.clone();
+            }
+
+            if self.world_block == 0 {
+                self.world_block = other.world_block;
+            }
+        }
+    }
+}
+
+#[derive(Debug, clap::Args, Clone, Serialize, Deserialize, PartialEq, Default)]
 #[command(next_help_heading = "Events indexing options")]
 pub struct EventsOptions {
     /// Whether or not to index raw events
-    #[arg(long = "events.raw", action = ArgAction::Set, default_value_t = true, help = "Whether or not to index raw events.")]
+    #[arg(
+        long = "events.raw",
+        default_value_t = false,
+        help = "Whether or not to index raw events."
+    )]
+    #[serde(default)]
     pub raw: bool,
 
     /// Event messages that are going to be treated as historical
@@ -168,13 +249,8 @@ pub struct EventsOptions {
         value_delimiter = ',',
         help = "Event messages that are going to be treated as historical during indexing."
     )]
-    pub historical: Option<Vec<String>>,
-}
-
-impl Default for EventsOptions {
-    fn default() -> Self {
-        Self { raw: true, historical: None }
-    }
+    #[serde(default)]
+    pub historical: Vec<String>,
 }
 
 #[derive(Debug, clap::Args, Clone, Serialize, Deserialize, PartialEq)]
@@ -195,6 +271,7 @@ pub struct ServerOptions {
     /// Comma separated list of domains from which to accept cross origin requests.
     #[arg(long = "http.cors_origins")]
     #[arg(value_delimiter = ',')]
+    #[serde(default)]
     pub http_cors_origins: Option<Vec<String>>,
 }
 
@@ -212,6 +289,7 @@ pub struct MetricsOptions {
     /// For now, metrics will still be collected even if this flag is not set. This only
     /// controls whether the metrics server is started or not.
     #[arg(long)]
+    #[serde(default)]
     pub metrics: bool,
 
     /// The metrics will be served at the given address.
@@ -267,6 +345,19 @@ where
 {
     let contracts: Vec<String> = Vec::deserialize(deserializer)?;
     contracts.iter().map(|s| parse_erc_contract(s).map_err(serde::de::Error::custom)).collect()
+}
+
+fn serialize_contracts<S>(contracts: &Vec<Contract>, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: serde::Serializer,
+{
+    let mut seq = serializer.serialize_seq(Some(contracts.len()))?;
+
+    for contract in contracts {
+        seq.serialize_element(&contract.to_string())?;
+    }
+
+    seq.end()
 }
 
 // ** Default functions to setup serde of the configuration file **
