@@ -38,6 +38,19 @@ pub trait ModelStorage<S, M> {
     /// Retrieves a model of type `M` using the provided entity id.
     fn read_member<T, +Serde<T>>(self: @S, ptr: ModelPtr<M>, field_selector: felt252) -> T;
 
+    /// Retrieves multiple members using the provided entity id.
+    fn read_members<T, +Serde<T>>(self: @S, ptr: ModelPtr<M>, field_selectors: Span<felt252>) -> T;
+
+    /// Retrieves a single member from multiple models.
+    fn read_models_member<T, +Serde<T>, +Drop<T>>(
+        self: @S, ptrs: Span<ModelPtr<M>>, field_selector: felt252,
+    ) -> Array<T>;
+
+    /// Retrieves multiple members from multiple models.
+    fn read_models_members<T, +Serde<T>, +Drop<T>>(
+        self: @S, ptrs: Span<ModelPtr<M>>, field_selectors: Span<felt252>,
+    ) -> Array<T>;
+
     /// Retrieves part of a model, matching a schema.
     fn read_schema<T, +Serde<T>, +Introspect<T>>(self: @S, ptr: ModelPtr<M>) -> T;
 
@@ -49,6 +62,21 @@ pub trait ModelStorage<S, M> {
     /// Updates a member of a model.
     fn write_member<T, +Serde<T>, +Drop<T>>(
         ref self: S, ptr: ModelPtr<M>, field_selector: felt252, value: T,
+    );
+
+    /// Updates multiple members of a model.
+    fn write_members<T, +Serde<T>, +Drop<T>>(
+        ref self: S, ptr: ModelPtr<M>, field_selectors: Span<felt252>, value: T,
+    );
+
+    /// Updates a member of multiple models.
+    fn write_models_member<T, +Serde<T>, +Drop<T>>(
+        ref self: S, ptrs: Span<ModelPtr<M>>, field_selector: felt252, values: Span<T>,
+    );
+
+    /// Updates multiple members of multiple models.
+    fn write_models_members<T, +Serde<T>, +Drop<T>>(
+        ref self: S, ptrs: Span<ModelPtr<M>>, field_selectors: Span<felt252>, values: Span<T>,
     );
 
     /// Returns the current namespace hash.
