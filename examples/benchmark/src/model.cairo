@@ -1,4 +1,4 @@
-use dojo::model::{Model, ModelValue, ModelStorage, ModelValueStorage};
+use dojo::model::{Model, ModelStorage, ModelValueStorage};
 use dojo::world::WorldStorage;
 use dojo_cairo_test::{spawn_test_world, NamespaceDef, TestResource};
 
@@ -99,6 +99,15 @@ fn read_schema_simple() {
 }
 
 #[test]
+fn read_members_simple() {
+    let mut world = spawn_foo_world();
+    world.write_model(@SINGLE);
+
+    let (v0,): (felt252,) = world.read_members(SINGLE.ptr(), [selector!("v0")].span());
+    assert!(v0 == SINGLE.v0);
+}
+
+#[test]
 fn read_member_simple() {
     let mut world = spawn_foo_world();
     world.write_model(@SINGLE);
@@ -136,6 +145,15 @@ fn read_single_schema_large() {
 }
 
 #[test]
+fn read_single_members_large() {
+    let mut world = spawn_foo_world();
+    world.write_model(@LARGE);
+
+    let (v5,): (felt252,) = world.read_members(LARGE.ptr(), [selector!("v5")].span());
+    assert!(v5 == LARGE.v5);
+}
+
+#[test]
 fn read_single_member_large() {
     let mut world = spawn_foo_world();
     world.write_model(@LARGE);
@@ -170,6 +188,16 @@ fn read_double_schema_large() {
 
     let schema: LargeDoubleSchema = world.read_schema(LARGE.ptr());
     assert!(schema.v0 == LARGE.v0 && schema.v5 == LARGE.v5);
+}
+
+#[test]
+fn read_double_members_large() {
+    let mut world = spawn_foo_world();
+    world.write_model(@LARGE);
+
+    let (v0, v5): (felt252, felt252) = world
+        .read_members(LARGE.ptr(), [selector!("v0"), selector!("v5")].span());
+    assert!(v0 == LARGE.v0 && v5 == LARGE.v5);
 }
 
 #[test]
@@ -231,6 +259,30 @@ fn read_sextuple_schema_large() {
 }
 
 #[test]
+fn read_sextuple_members_large() {
+    let mut world = spawn_foo_world();
+    world.write_model(@LARGE);
+
+    let (v0, v1, v2, v3, v4, v5): (felt252, felt252, felt252, felt252, felt252, felt252) = world
+        .read_members(
+            LARGE.ptr(),
+            [
+                selector!("v0"), selector!("v1"), selector!("v2"), selector!("v3"), selector!("v4"),
+                selector!("v5"),
+            ]
+                .span(),
+        );
+    assert!(
+        v0 == LARGE.v0
+            && v1 == LARGE.v1
+            && v2 == LARGE.v2
+            && v3 == LARGE.v3
+            && v4 == LARGE.v4
+            && v5 == LARGE.v5,
+    );
+}
+
+#[test]
 fn read_sextuple_member_large() {
     let mut world = spawn_foo_world();
     world.write_model(@LARGE);
@@ -250,3 +302,29 @@ fn read_sextuple_member_large() {
             && v5 == LARGE.v5,
     );
 }
+// Results:
+// read_member_simple ... ok (gas usage est.: 5650186)
+// read_members_simple ... ok (gas usage est.: 5725016)
+// read_schema_simple ... ok (gas usage est.: 5703956)
+// read_value_simple ... ok (gas usage est.: 5705356)
+// read_model_simple ... ok (gas usage est.: 5717476)
+
+// read_single_member_large ... ok (gas usage est.: 6718368)
+// read_single_members_large ... ok (gas usage est.: 6799398)
+// read_single_schema_large ... ok (gas usage est.: 6746038)
+// read_single_value_large ... ok (gas usage est.: 7803518)
+// read_single_model_large ... ok (gas usage est.: 7826458)
+
+// read_double_member_large ... ok (gas usage est.: 7090050)
+// read_double_members_large ... ok (gas usage est.: 7026974)
+// read_double_schema_large ... ok (gas usage est.: 6974764)
+// read_double_value_large ... ok (gas usage est.: 7821488)
+// read_double_model_large ... ok (gas usage est.: 7844428)
+
+// read_sextuple_member_large ... ok (gas usage est.: 8686858)
+// read_sextuple_members_large ... ok (gas usage est.: 8047758)
+// read_sextuple_schema_large ... ok (gas usage est.: 7909238)
+// read_sextuple_value_large ... ok (gas usage est.: 7910638)
+// read_sextuple_model_large ... ok (gas usage est.: 7933578)
+
+
