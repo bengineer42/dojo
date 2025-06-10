@@ -13,6 +13,8 @@ pub enum ModelIndex {
     Id: felt252,
     // (entity_id, member_id)
     MemberId: (felt252, felt252),
+    // (entity_id, member_ids)
+    Schema: felt252,
 }
 
 /// The `ModelDefinition` trait.
