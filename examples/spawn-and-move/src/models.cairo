@@ -88,6 +88,12 @@ pub struct PlayerConfig {
     pub favorite_item: Option<u32>,
 }
 
+#[derive(Drop, Serde, Introspect)]
+pub struct PlayerConfigItems {
+    pub items: Array<PlayerItem>,
+    pub favorite_item: Option<u32>,
+}
+
 #[derive(Drop, Serde)]
 #[dojo::model]
 pub struct ServerProfile {
