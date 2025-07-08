@@ -1,0 +1,26 @@
+[package]
+cairo-version = "2.10.1"
+name = "every_type"
+version = "0.14.0"
+experimental-features = ["associated_item_constraints"]
+
+[cairo]
+sierra-replace-ids = true
+
+[dependencies]
+dojo = { git = "https://github.com/dojoengine/dojo", tag = "v1.5.1" }
+
+[tool.dojo]
+initializer_class_hash = "0xbeef"
+
+[[target.starknet-contract]]
+sierra = true
+casm = true
+build-external-contracts = ["dojo::world::world_contract::world"]
+
+[dev-dependencies]
+dojo_cairo_test = { git = "https://github.com/dojoengine/dojo", tag = "v1.5.1" }
+
+
+[profile.sepolia]
+[profile.cloud]
