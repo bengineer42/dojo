@@ -173,7 +173,7 @@ pub mod world {
     }
 
     #[derive(Drop, starknet::Event)]
-    pub struct ModelSchemaRegistered {
+    pub struct ModelWithSchemaRegistered {
         #[key]
         pub name: ByteArray,
         #[key]
