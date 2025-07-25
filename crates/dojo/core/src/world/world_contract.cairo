@@ -32,7 +32,7 @@ pub mod world {
     use dojo::meta::{
         IDeployedResourceDispatcher, IDeployedResourceDispatcherTrait,
         IDeployedResourceLibraryDispatcher, IStoredResourceDispatcher,
-        IStoredResourceDispatcherTrait, Layout, LayoutCompareTrait, TyCompareTrait,
+        IStoredResourceDispatcherTrait, Layout, LayoutCompareTrait, Ty, TyCompareTrait,
     };
     use dojo::model::{Model, ModelIndex, ResourceMetadata, metadata};
     use dojo::storage;
@@ -46,10 +46,7 @@ pub mod world {
         StoragePointerWriteAccess,
     };
     use starknet::syscalls::{call_contract_syscall, deploy_syscall, replace_class_syscall};
-    use starknet::{
-        ClassHash, ContractAddress, SyscallResult, SyscallResultTrait, get_caller_address,
-        get_tx_info,
-    };
+    use starknet::{ClassHash, ContractAddress, SyscallResultTrait, get_caller_address, get_tx_info};
     use super::Permission;
 
     pub const WORLD: felt252 = 0;
@@ -62,6 +59,7 @@ pub mod world {
         WorldUpgraded: WorldUpgraded,
         NamespaceRegistered: NamespaceRegistered,
         ModelRegistered: ModelRegistered,
+        ModelWithSchemaRegistered: ModelWithSchemaRegistered,
         EventRegistered: EventRegistered,
         ContractRegistered: ContractRegistered,
         ModelUpgraded: ModelUpgraded,
@@ -74,6 +72,7 @@ pub mod world {
         StoreSetRecord: StoreSetRecord,
         StoreUpdateRecord: StoreUpdateRecord,
         StoreUpdateMember: StoreUpdateMember,
+        StoreUpdateMembers: StoreUpdateMembers,
         StoreDelRecord: StoreDelRecord,
         WriterUpdated: WriterUpdated,
         OwnerUpdated: OwnerUpdated,
@@ -140,6 +139,15 @@ pub mod world {
         pub namespace: ByteArray,
         pub class_hash: ClassHash,
         pub address: ContractAddress,
+    }
+
+    #[derive(Drop, starknet::Event)]
+    pub struct ModelWithSchemaRegistered {
+        #[key]
+        pub name: ByteArray,
+        #[key]
+        pub namespace: ByteArray,
+        pub schema: Ty,
     }
 
     #[derive(Drop, starknet::Event)]
@@ -941,7 +949,7 @@ pub mod world {
 
             for i in indexes {
                 models.append(self.get_entity_internal(model_selector, *i, layout));
-            }
+            };
 
             models.span()
         }
