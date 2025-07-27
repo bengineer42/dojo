@@ -206,7 +206,7 @@ where
     }
 }
 
-pub fn parse_schema(ty: &abigen::model::Ty) -> Result<Ty, ParseError> {
+fn parse_schema(ty: &abigen::model::Ty) -> Result<Ty, ParseError> {
     match ty {
         abigen::model::Ty::Primitive(primitive) => {
             let ty = parse_cairo_short_string(primitive)?;

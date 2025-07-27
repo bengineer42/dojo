@@ -788,7 +788,7 @@ impl ModelUpgraded {
 pub struct ModelWithSchemaRegistered {
     pub name: cainome::cairo_serde::ByteArray,
     pub namespace: cainome::cairo_serde::ByteArray,
-    pub schema: Ty,
+    pub schema: Struct,
 }
 impl cainome::cairo_serde::CairoSerde for ModelWithSchemaRegistered {
     type RustType = Self;
@@ -798,7 +798,7 @@ impl cainome::cairo_serde::CairoSerde for ModelWithSchemaRegistered {
         let mut __size = 0;
         __size += cainome::cairo_serde::ByteArray::cairo_serialized_size(&__rust.name);
         __size += cainome::cairo_serde::ByteArray::cairo_serialized_size(&__rust.namespace);
-        __size += Ty::cairo_serialized_size(&__rust.schema);
+        __size += Struct::cairo_serialized_size(&__rust.schema);
         __size
     }
     fn cairo_serialize(__rust: &Self::RustType) -> Vec<starknet::core::types::Felt> {
@@ -809,7 +809,7 @@ impl cainome::cairo_serde::CairoSerde for ModelWithSchemaRegistered {
         __out.extend(cainome::cairo_serde::ByteArray::cairo_serialize(
             &__rust.namespace,
         ));
-        __out.extend(Ty::cairo_serialize(&__rust.schema));
+        __out.extend(Struct::cairo_serialize(&__rust.schema));
         __out
     }
     fn cairo_deserialize(
@@ -821,8 +821,8 @@ impl cainome::cairo_serde::CairoSerde for ModelWithSchemaRegistered {
         __offset += cainome::cairo_serde::ByteArray::cairo_serialized_size(&name);
         let namespace = cainome::cairo_serde::ByteArray::cairo_deserialize(__felts, __offset)?;
         __offset += cainome::cairo_serde::ByteArray::cairo_serialized_size(&namespace);
-        let schema = Ty::cairo_deserialize(__felts, __offset)?;
-        __offset += Ty::cairo_serialized_size(&schema);
+        let schema = Struct::cairo_deserialize(__felts, __offset)?;
+        __offset += Struct::cairo_serialized_size(&schema);
         Ok(ModelWithSchemaRegistered {
             name,
             namespace,
@@ -1935,7 +1935,7 @@ impl TryFrom<&starknet::core::types::EmittedEvent> for Event {
                     }
                 };
             key_offset += cainome::cairo_serde::ByteArray::cairo_serialized_size(&namespace);
-            let schema = match Ty::cairo_deserialize(&event.data, data_offset) {
+            let schema = match Struct::cairo_deserialize(&event.data, data_offset) {
                 Ok(v) => v,
                 Err(e) => {
                     return Err(format!(
@@ -1944,7 +1944,7 @@ impl TryFrom<&starknet::core::types::EmittedEvent> for Event {
                     ));
                 }
             };
-            data_offset += Ty::cairo_serialized_size(&schema);
+            data_offset += Struct::cairo_serialized_size(&schema);
             return Ok(Event::ModelWithSchemaRegistered(
                 ModelWithSchemaRegistered {
                     name,
@@ -3012,7 +3012,7 @@ impl TryFrom<&starknet::core::types::Event> for Event {
                     }
                 };
             key_offset += cainome::cairo_serde::ByteArray::cairo_serialized_size(&namespace);
-            let schema = match Ty::cairo_deserialize(&event.data, data_offset) {
+            let schema = match Struct::cairo_deserialize(&event.data, data_offset) {
                 Ok(v) => v,
                 Err(e) => {
                     return Err(format!(
@@ -3021,7 +3021,7 @@ impl TryFrom<&starknet::core::types::Event> for Event {
                     ));
                 }
             };
-            data_offset += Ty::cairo_serialized_size(&schema);
+            data_offset += Struct::cairo_serialized_size(&schema);
             return Ok(Event::ModelWithSchemaRegistered(
                 ModelWithSchemaRegistered {
                     name,

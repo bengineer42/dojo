@@ -32,8 +32,9 @@ pub mod world {
     use dojo::meta::{
         IDeployedResourceDispatcher, IDeployedResourceDispatcherTrait,
         IDeployedResourceLibraryDispatcher, IStoredResourceDispatcher,
-        IStoredResourceDispatcherTrait, Layout, LayoutCompareTrait, Ty, TyCompareTrait,
+        IStoredResourceDispatcherTrait, Layout, LayoutCompareTrait, TyCompareTrait,
     };
+    use dojo::meta::introspect::Struct;
     use dojo::model::{Model, ModelIndex, ResourceMetadata, metadata};
     use dojo::storage;
     use dojo::utils::{
@@ -147,7 +148,7 @@ pub mod world {
         pub name: ByteArray,
         #[key]
         pub namespace: ByteArray,
-        pub schema: Ty,
+        pub schema: Struct,
     }
 
     #[derive(Drop, starknet::Event)]
