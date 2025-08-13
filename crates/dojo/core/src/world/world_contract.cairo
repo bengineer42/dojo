@@ -32,7 +32,7 @@ pub mod world {
     use dojo::meta::{
         IDeployedResourceDispatcher, IDeployedResourceDispatcherTrait,
         IDeployedResourceLibraryDispatcher, IStoredResourceDispatcher,
-        IStoredResourceDispatcherTrait, Layout, LayoutCompareTrait, TyCompareTrait,
+        IStoredResourceDispatcherTrait, Layout, LayoutCompareTrait, Ty, TyCompareTrait,
     };
     use dojo::model::{Model, ModelIndex, ResourceMetadata, metadata};
     use dojo::storage;
@@ -170,6 +170,24 @@ pub mod world {
         pub namespace: ByteArray,
         pub class_hash: ClassHash,
         pub address: ContractAddress,
+    }
+
+    #[derive(Drop, starknet::Event)]
+    pub struct ModelWithSchemaRegistered {
+        #[key]
+        pub name: ByteArray,
+        #[key]
+        pub namespace: ByteArray,
+        pub schema: Ty,
+    }
+
+    #[derive(Drop, starknet::Event)]
+    pub struct ModelMetadata {
+        #[key]
+        pub selector: felt252,
+        pub layout: Layout,
+        pub unpacked_size: usize,
+        pub packed_size: usize,
     }
 
     #[derive(Drop, starknet::Event)]
