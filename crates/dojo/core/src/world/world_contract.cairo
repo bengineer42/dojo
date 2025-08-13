@@ -32,7 +32,7 @@ pub mod world {
     use dojo::meta::{
         IDeployedResourceDispatcher, IDeployedResourceDispatcherTrait,
         IDeployedResourceLibraryDispatcher, IStoredResourceDispatcher,
-        IStoredResourceDispatcherTrait, Layout, LayoutCompareTrait, Ty, TyCompareTrait,
+        IStoredResourceDispatcherTrait, Layout, Ty, TyCompareTrait, LayoutTrait, FieldLayoutsTrait,
     };
     use dojo::model::{Model, ModelIndex, ResourceMetadata, metadata};
     use dojo::storage;
@@ -40,6 +40,7 @@ pub mod world {
         bytearray_hash, default_address, default_class_hash, entity_id_from_serialized_keys,
         selector_from_namespace_and_name,
     };
+
     use dojo::world::{IUpgradeableWorld, IWorld, Resource, ResourceIsNoneTrait, errors};
     use starknet::storage::Map;
     pub use starknet::storage::{
