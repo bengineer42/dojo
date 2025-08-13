@@ -231,6 +231,53 @@ impl ContractUpgraded {
     }
 }
 #[derive(Clone, serde::Serialize, serde::Deserialize, PartialEq, Debug)]
+pub struct Enum {
+    pub name: starknet::core::types::Felt,
+    pub attrs: Vec<starknet::core::types::Felt>,
+    pub children: Vec<(starknet::core::types::Felt, Ty)>,
+}
+impl cainome::cairo_serde::CairoSerde for Enum {
+    type RustType = Self;
+    const SERIALIZED_SIZE: std::option::Option<usize> = None;
+    #[inline]
+    fn cairo_serialized_size(__rust: &Self::RustType) -> usize {
+        let mut __size = 0;
+        __size += starknet::core::types::Felt::cairo_serialized_size(&__rust.name);
+        __size += Vec::<starknet::core::types::Felt>::cairo_serialized_size(&__rust.attrs);
+        __size += Vec::<(starknet::core::types::Felt, Ty)>::cairo_serialized_size(&__rust.children);
+        __size
+    }
+    fn cairo_serialize(__rust: &Self::RustType) -> Vec<starknet::core::types::Felt> {
+        let mut __out: Vec<starknet::core::types::Felt> = vec![];
+        __out.extend(starknet::core::types::Felt::cairo_serialize(&__rust.name));
+        __out.extend(Vec::<starknet::core::types::Felt>::cairo_serialize(
+            &__rust.attrs,
+        ));
+        __out.extend(Vec::<(starknet::core::types::Felt, Ty)>::cairo_serialize(
+            &__rust.children,
+        ));
+        __out
+    }
+    fn cairo_deserialize(
+        __felts: &[starknet::core::types::Felt],
+        __offset: usize,
+    ) -> cainome::cairo_serde::Result<Self::RustType> {
+        let mut __offset = __offset;
+        let name = starknet::core::types::Felt::cairo_deserialize(__felts, __offset)?;
+        __offset += starknet::core::types::Felt::cairo_serialized_size(&name);
+        let attrs = Vec::<starknet::core::types::Felt>::cairo_deserialize(__felts, __offset)?;
+        __offset += Vec::<starknet::core::types::Felt>::cairo_serialized_size(&attrs);
+        let children =
+            Vec::<(starknet::core::types::Felt, Ty)>::cairo_deserialize(__felts, __offset)?;
+        __offset += Vec::<(starknet::core::types::Felt, Ty)>::cairo_serialized_size(&children);
+        Ok(Enum {
+            name,
+            attrs,
+            children,
+        })
+    }
+}
+#[derive(Clone, serde::Serialize, serde::Deserialize, PartialEq, Debug)]
 pub struct EventEmitted {
     pub selector: starknet::core::types::Felt,
     pub system_address: cainome::cairo_serde::ContractAddress,
@@ -694,6 +741,46 @@ impl LibraryRegistered {
     }
 }
 #[derive(Clone, serde::Serialize, serde::Deserialize, PartialEq, Debug)]
+pub struct Member {
+    pub name: starknet::core::types::Felt,
+    pub attrs: Vec<starknet::core::types::Felt>,
+    pub ty: Ty,
+}
+impl cainome::cairo_serde::CairoSerde for Member {
+    type RustType = Self;
+    const SERIALIZED_SIZE: std::option::Option<usize> = None;
+    #[inline]
+    fn cairo_serialized_size(__rust: &Self::RustType) -> usize {
+        let mut __size = 0;
+        __size += starknet::core::types::Felt::cairo_serialized_size(&__rust.name);
+        __size += Vec::<starknet::core::types::Felt>::cairo_serialized_size(&__rust.attrs);
+        __size += Ty::cairo_serialized_size(&__rust.ty);
+        __size
+    }
+    fn cairo_serialize(__rust: &Self::RustType) -> Vec<starknet::core::types::Felt> {
+        let mut __out: Vec<starknet::core::types::Felt> = vec![];
+        __out.extend(starknet::core::types::Felt::cairo_serialize(&__rust.name));
+        __out.extend(Vec::<starknet::core::types::Felt>::cairo_serialize(
+            &__rust.attrs,
+        ));
+        __out.extend(Ty::cairo_serialize(&__rust.ty));
+        __out
+    }
+    fn cairo_deserialize(
+        __felts: &[starknet::core::types::Felt],
+        __offset: usize,
+    ) -> cainome::cairo_serde::Result<Self::RustType> {
+        let mut __offset = __offset;
+        let name = starknet::core::types::Felt::cairo_deserialize(__felts, __offset)?;
+        __offset += starknet::core::types::Felt::cairo_serialized_size(&name);
+        let attrs = Vec::<starknet::core::types::Felt>::cairo_deserialize(__felts, __offset)?;
+        __offset += Vec::<starknet::core::types::Felt>::cairo_serialized_size(&attrs);
+        let ty = Ty::cairo_deserialize(__felts, __offset)?;
+        __offset += Ty::cairo_serialized_size(&ty);
+        Ok(Member { name, attrs, ty })
+    }
+}
+#[derive(Clone, serde::Serialize, serde::Deserialize, PartialEq, Debug)]
 pub struct MetadataUpdate {
     pub resource: starknet::core::types::Felt,
     pub uri: cainome::cairo_serde::ByteArray,
@@ -875,6 +962,60 @@ impl ModelUpgraded {
     }
     pub fn event_name() -> &'static str {
         "ModelUpgraded"
+    }
+}
+#[derive(Clone, serde::Serialize, serde::Deserialize, PartialEq, Debug)]
+pub struct ModelWithSchemaRegistered {
+    pub name: cainome::cairo_serde::ByteArray,
+    pub namespace: cainome::cairo_serde::ByteArray,
+    pub schema: Struct,
+}
+impl cainome::cairo_serde::CairoSerde for ModelWithSchemaRegistered {
+    type RustType = Self;
+    const SERIALIZED_SIZE: std::option::Option<usize> = None;
+    #[inline]
+    fn cairo_serialized_size(__rust: &Self::RustType) -> usize {
+        let mut __size = 0;
+        __size += cainome::cairo_serde::ByteArray::cairo_serialized_size(&__rust.name);
+        __size += cainome::cairo_serde::ByteArray::cairo_serialized_size(&__rust.namespace);
+        __size += Struct::cairo_serialized_size(&__rust.schema);
+        __size
+    }
+    fn cairo_serialize(__rust: &Self::RustType) -> Vec<starknet::core::types::Felt> {
+        let mut __out: Vec<starknet::core::types::Felt> = vec![];
+        __out.extend(cainome::cairo_serde::ByteArray::cairo_serialize(
+            &__rust.name,
+        ));
+        __out.extend(cainome::cairo_serde::ByteArray::cairo_serialize(
+            &__rust.namespace,
+        ));
+        __out.extend(Struct::cairo_serialize(&__rust.schema));
+        __out
+    }
+    fn cairo_deserialize(
+        __felts: &[starknet::core::types::Felt],
+        __offset: usize,
+    ) -> cainome::cairo_serde::Result<Self::RustType> {
+        let mut __offset = __offset;
+        let name = cainome::cairo_serde::ByteArray::cairo_deserialize(__felts, __offset)?;
+        __offset += cainome::cairo_serde::ByteArray::cairo_serialized_size(&name);
+        let namespace = cainome::cairo_serde::ByteArray::cairo_deserialize(__felts, __offset)?;
+        __offset += cainome::cairo_serde::ByteArray::cairo_serialized_size(&namespace);
+        let schema = Struct::cairo_deserialize(__felts, __offset)?;
+        __offset += Struct::cairo_serialized_size(&schema);
+        Ok(ModelWithSchemaRegistered {
+            name,
+            namespace,
+            schema,
+        })
+    }
+}
+impl ModelWithSchemaRegistered {
+    pub fn event_selector() -> starknet::core::types::Felt {
+        starknet::core::utils::get_selector_from_name("ModelWithSchemaRegistered").unwrap()
+    }
+    pub fn event_name() -> &'static str {
+        "ModelWithSchemaRegistered"
     }
 }
 #[derive(Clone, serde::Serialize, serde::Deserialize, PartialEq, Debug)]
@@ -1321,6 +1462,50 @@ impl StoreUpdateRecord {
     }
 }
 #[derive(Clone, serde::Serialize, serde::Deserialize, PartialEq, Debug)]
+pub struct Struct {
+    pub name: starknet::core::types::Felt,
+    pub attrs: Vec<starknet::core::types::Felt>,
+    pub children: Vec<Member>,
+}
+impl cainome::cairo_serde::CairoSerde for Struct {
+    type RustType = Self;
+    const SERIALIZED_SIZE: std::option::Option<usize> = None;
+    #[inline]
+    fn cairo_serialized_size(__rust: &Self::RustType) -> usize {
+        let mut __size = 0;
+        __size += starknet::core::types::Felt::cairo_serialized_size(&__rust.name);
+        __size += Vec::<starknet::core::types::Felt>::cairo_serialized_size(&__rust.attrs);
+        __size += Vec::<Member>::cairo_serialized_size(&__rust.children);
+        __size
+    }
+    fn cairo_serialize(__rust: &Self::RustType) -> Vec<starknet::core::types::Felt> {
+        let mut __out: Vec<starknet::core::types::Felt> = vec![];
+        __out.extend(starknet::core::types::Felt::cairo_serialize(&__rust.name));
+        __out.extend(Vec::<starknet::core::types::Felt>::cairo_serialize(
+            &__rust.attrs,
+        ));
+        __out.extend(Vec::<Member>::cairo_serialize(&__rust.children));
+        __out
+    }
+    fn cairo_deserialize(
+        __felts: &[starknet::core::types::Felt],
+        __offset: usize,
+    ) -> cainome::cairo_serde::Result<Self::RustType> {
+        let mut __offset = __offset;
+        let name = starknet::core::types::Felt::cairo_deserialize(__felts, __offset)?;
+        __offset += starknet::core::types::Felt::cairo_serialized_size(&name);
+        let attrs = Vec::<starknet::core::types::Felt>::cairo_deserialize(__felts, __offset)?;
+        __offset += Vec::<starknet::core::types::Felt>::cairo_serialized_size(&attrs);
+        let children = Vec::<Member>::cairo_deserialize(__felts, __offset)?;
+        __offset += Vec::<Member>::cairo_serialized_size(&children);
+        Ok(Struct {
+            name,
+            attrs,
+            children,
+        })
+    }
+}
+#[derive(Clone, serde::Serialize, serde::Deserialize, PartialEq, Debug)]
 pub struct WorldSpawned {
     pub creator: cainome::cairo_serde::ContractAddress,
     pub class_hash: cainome::cairo_serde::ClassHash,
@@ -1466,6 +1651,7 @@ pub enum Event {
     WorldUpgraded(WorldUpgraded),
     NamespaceRegistered(NamespaceRegistered),
     ModelRegistered(ModelRegistered),
+    ModelWithSchemaRegistered(ModelWithSchemaRegistered),
     EventRegistered(EventRegistered),
     ContractRegistered(ContractRegistered),
     ExternalContractRegistered(ExternalContractRegistered),
@@ -1495,6 +1681,9 @@ impl cainome::cairo_serde::CairoSerde for Event {
             Event::WorldUpgraded(val) => WorldUpgraded::cairo_serialized_size(val) + 1,
             Event::NamespaceRegistered(val) => NamespaceRegistered::cairo_serialized_size(val) + 1,
             Event::ModelRegistered(val) => ModelRegistered::cairo_serialized_size(val) + 1,
+            Event::ModelWithSchemaRegistered(val) => {
+                ModelWithSchemaRegistered::cairo_serialized_size(val) + 1
+            }
             Event::EventRegistered(val) => EventRegistered::cairo_serialized_size(val) + 1,
             Event::ContractRegistered(val) => ContractRegistered::cairo_serialized_size(val) + 1,
             Event::ExternalContractRegistered(val) => {
@@ -1546,111 +1735,117 @@ impl cainome::cairo_serde::CairoSerde for Event {
                 temp.extend(ModelRegistered::cairo_serialize(val));
                 temp
             }
-            Event::EventRegistered(val) => {
+            Event::ModelWithSchemaRegistered(val) => {
                 let mut temp = vec![];
                 temp.extend(usize::cairo_serialize(&4usize));
+                temp.extend(ModelWithSchemaRegistered::cairo_serialize(val));
+                temp
+            }
+            Event::EventRegistered(val) => {
+                let mut temp = vec![];
+                temp.extend(usize::cairo_serialize(&5usize));
                 temp.extend(EventRegistered::cairo_serialize(val));
                 temp
             }
             Event::ContractRegistered(val) => {
                 let mut temp = vec![];
-                temp.extend(usize::cairo_serialize(&5usize));
+                temp.extend(usize::cairo_serialize(&6usize));
                 temp.extend(ContractRegistered::cairo_serialize(val));
                 temp
             }
             Event::ExternalContractRegistered(val) => {
                 let mut temp = vec![];
-                temp.extend(usize::cairo_serialize(&6usize));
+                temp.extend(usize::cairo_serialize(&7usize));
                 temp.extend(ExternalContractRegistered::cairo_serialize(val));
                 temp
             }
             Event::ExternalContractUpgraded(val) => {
                 let mut temp = vec![];
-                temp.extend(usize::cairo_serialize(&7usize));
+                temp.extend(usize::cairo_serialize(&8usize));
                 temp.extend(ExternalContractUpgraded::cairo_serialize(val));
                 temp
             }
             Event::ModelUpgraded(val) => {
                 let mut temp = vec![];
-                temp.extend(usize::cairo_serialize(&8usize));
+                temp.extend(usize::cairo_serialize(&9usize));
                 temp.extend(ModelUpgraded::cairo_serialize(val));
                 temp
             }
             Event::EventUpgraded(val) => {
                 let mut temp = vec![];
-                temp.extend(usize::cairo_serialize(&9usize));
+                temp.extend(usize::cairo_serialize(&10usize));
                 temp.extend(EventUpgraded::cairo_serialize(val));
                 temp
             }
             Event::ContractUpgraded(val) => {
                 let mut temp = vec![];
-                temp.extend(usize::cairo_serialize(&10usize));
+                temp.extend(usize::cairo_serialize(&11usize));
                 temp.extend(ContractUpgraded::cairo_serialize(val));
                 temp
             }
             Event::ContractInitialized(val) => {
                 let mut temp = vec![];
-                temp.extend(usize::cairo_serialize(&11usize));
+                temp.extend(usize::cairo_serialize(&12usize));
                 temp.extend(ContractInitialized::cairo_serialize(val));
                 temp
             }
             Event::LibraryRegistered(val) => {
                 let mut temp = vec![];
-                temp.extend(usize::cairo_serialize(&12usize));
+                temp.extend(usize::cairo_serialize(&13usize));
                 temp.extend(LibraryRegistered::cairo_serialize(val));
                 temp
             }
             Event::EventEmitted(val) => {
                 let mut temp = vec![];
-                temp.extend(usize::cairo_serialize(&13usize));
+                temp.extend(usize::cairo_serialize(&14usize));
                 temp.extend(EventEmitted::cairo_serialize(val));
                 temp
             }
             Event::MetadataUpdate(val) => {
                 let mut temp = vec![];
-                temp.extend(usize::cairo_serialize(&14usize));
+                temp.extend(usize::cairo_serialize(&15usize));
                 temp.extend(MetadataUpdate::cairo_serialize(val));
                 temp
             }
             Event::StoreSetRecord(val) => {
                 let mut temp = vec![];
-                temp.extend(usize::cairo_serialize(&15usize));
+                temp.extend(usize::cairo_serialize(&16usize));
                 temp.extend(StoreSetRecord::cairo_serialize(val));
                 temp
             }
             Event::StoreUpdateRecord(val) => {
                 let mut temp = vec![];
-                temp.extend(usize::cairo_serialize(&16usize));
+                temp.extend(usize::cairo_serialize(&17usize));
                 temp.extend(StoreUpdateRecord::cairo_serialize(val));
                 temp
             }
             Event::StoreUpdateMember(val) => {
                 let mut temp = vec![];
-                temp.extend(usize::cairo_serialize(&17usize));
+                temp.extend(usize::cairo_serialize(&18usize));
                 temp.extend(StoreUpdateMember::cairo_serialize(val));
                 temp
             }
             Event::StoreUpdateMembers(val) => {
                 let mut temp = vec![];
-                temp.extend(usize::cairo_serialize(&18usize));
+                temp.extend(usize::cairo_serialize(&19usize));
                 temp.extend(StoreUpdateMembers::cairo_serialize(val));
                 temp
             }
             Event::StoreDelRecord(val) => {
                 let mut temp = vec![];
-                temp.extend(usize::cairo_serialize(&19usize));
+                temp.extend(usize::cairo_serialize(&20usize));
                 temp.extend(StoreDelRecord::cairo_serialize(val));
                 temp
             }
             Event::WriterUpdated(val) => {
                 let mut temp = vec![];
-                temp.extend(usize::cairo_serialize(&20usize));
+                temp.extend(usize::cairo_serialize(&21usize));
                 temp.extend(WriterUpdated::cairo_serialize(val));
                 temp
             }
             Event::OwnerUpdated(val) => {
                 let mut temp = vec![];
-                temp.extend(usize::cairo_serialize(&21usize));
+                temp.extend(usize::cairo_serialize(&22usize));
                 temp.extend(OwnerUpdated::cairo_serialize(val));
                 temp
             }
@@ -1679,66 +1874,69 @@ impl cainome::cairo_serde::CairoSerde for Event {
                 __felts,
                 __offset + 1,
             )?)),
-            4usize => Ok(Event::EventRegistered(EventRegistered::cairo_deserialize(
+            4usize => Ok(Event::ModelWithSchemaRegistered(
+                ModelWithSchemaRegistered::cairo_deserialize(__felts, __offset + 1)?,
+            )),
+            5usize => Ok(Event::EventRegistered(EventRegistered::cairo_deserialize(
                 __felts,
                 __offset + 1,
             )?)),
-            5usize => Ok(Event::ContractRegistered(
+            6usize => Ok(Event::ContractRegistered(
                 ContractRegistered::cairo_deserialize(__felts, __offset + 1)?,
             )),
-            6usize => Ok(Event::ExternalContractRegistered(
+            7usize => Ok(Event::ExternalContractRegistered(
                 ExternalContractRegistered::cairo_deserialize(__felts, __offset + 1)?,
             )),
-            7usize => Ok(Event::ExternalContractUpgraded(
+            8usize => Ok(Event::ExternalContractUpgraded(
                 ExternalContractUpgraded::cairo_deserialize(__felts, __offset + 1)?,
             )),
-            8usize => Ok(Event::ModelUpgraded(ModelUpgraded::cairo_deserialize(
+            9usize => Ok(Event::ModelUpgraded(ModelUpgraded::cairo_deserialize(
                 __felts,
                 __offset + 1,
             )?)),
-            9usize => Ok(Event::EventUpgraded(EventUpgraded::cairo_deserialize(
+            10usize => Ok(Event::EventUpgraded(EventUpgraded::cairo_deserialize(
                 __felts,
                 __offset + 1,
             )?)),
-            10usize => Ok(Event::ContractUpgraded(
+            11usize => Ok(Event::ContractUpgraded(
                 ContractUpgraded::cairo_deserialize(__felts, __offset + 1)?,
             )),
-            11usize => Ok(Event::ContractInitialized(
+            12usize => Ok(Event::ContractInitialized(
                 ContractInitialized::cairo_deserialize(__felts, __offset + 1)?,
             )),
-            12usize => Ok(Event::LibraryRegistered(
+            13usize => Ok(Event::LibraryRegistered(
                 LibraryRegistered::cairo_deserialize(__felts, __offset + 1)?,
             )),
-            13usize => Ok(Event::EventEmitted(EventEmitted::cairo_deserialize(
+            14usize => Ok(Event::EventEmitted(EventEmitted::cairo_deserialize(
                 __felts,
                 __offset + 1,
             )?)),
-            14usize => Ok(Event::MetadataUpdate(MetadataUpdate::cairo_deserialize(
+            15usize => Ok(Event::MetadataUpdate(MetadataUpdate::cairo_deserialize(
                 __felts,
                 __offset + 1,
             )?)),
-            15usize => Ok(Event::StoreSetRecord(StoreSetRecord::cairo_deserialize(
+            16usize => Ok(Event::StoreSetRecord(StoreSetRecord::cairo_deserialize(
                 __felts,
                 __offset + 1,
             )?)),
-            16usize => Ok(Event::StoreUpdateRecord(
+            17usize => Ok(Event::StoreUpdateRecord(
                 StoreUpdateRecord::cairo_deserialize(__felts, __offset + 1)?,
             )),
-            17usize => Ok(Event::StoreUpdateMember(
+            18usize => Ok(Event::StoreUpdateMember(
                 StoreUpdateMember::cairo_deserialize(__felts, __offset + 1)?,
             )),
-            18usize => Ok(Event::StoreUpdateMembers(
+            19usize => Ok(Event::StoreUpdateMembers(
                 StoreUpdateMembers::cairo_deserialize(__felts, __offset + 1)?,
             )),
-            19usize => Ok(Event::StoreDelRecord(StoreDelRecord::cairo_deserialize(
+            20usize => Ok(Event::StoreDelRecord(StoreDelRecord::cairo_deserialize(
                 __felts,
                 __offset + 1,
             )?)),
-            20usize => Ok(Event::WriterUpdated(WriterUpdated::cairo_deserialize(
+            21usize => Ok(Event::WriterUpdated(WriterUpdated::cairo_deserialize(
                 __felts,
                 __offset + 1,
             )?)),
-            21usize => Ok(Event::OwnerUpdated(OwnerUpdated::cairo_deserialize(
+            22usize => Ok(Event::OwnerUpdated(OwnerUpdated::cairo_deserialize(
                 __felts,
                 __offset + 1,
             )?)),
@@ -1913,6 +2111,53 @@ impl TryFrom<&starknet::core::types::EmittedEvent> for Event {
                 class_hash,
                 address,
             }));
+        }
+        let selector = event.keys[0];
+        if selector
+            == starknet::core::utils::get_selector_from_name("ModelWithSchemaRegistered")
+                .unwrap_or_else(|_| panic!("Invalid selector for {}", "ModelWithSchemaRegistered"))
+        {
+            let mut key_offset = 0 + 1;
+            let mut data_offset = 0;
+            let name =
+                match cainome::cairo_serde::ByteArray::cairo_deserialize(&event.keys, key_offset) {
+                    Ok(v) => v,
+                    Err(e) => {
+                        return Err(format!(
+                            "Could not deserialize field {} for {}: {:?}",
+                            "name", "ModelWithSchemaRegistered", e
+                        ));
+                    }
+                };
+            key_offset += cainome::cairo_serde::ByteArray::cairo_serialized_size(&name);
+            let namespace =
+                match cainome::cairo_serde::ByteArray::cairo_deserialize(&event.keys, key_offset) {
+                    Ok(v) => v,
+                    Err(e) => {
+                        return Err(format!(
+                            "Could not deserialize field {} for {}: {:?}",
+                            "namespace", "ModelWithSchemaRegistered", e
+                        ));
+                    }
+                };
+            key_offset += cainome::cairo_serde::ByteArray::cairo_serialized_size(&namespace);
+            let schema = match Struct::cairo_deserialize(&event.data, data_offset) {
+                Ok(v) => v,
+                Err(e) => {
+                    return Err(format!(
+                        "Could not deserialize field {} for {}: {:?}",
+                        "schema", "ModelWithSchemaRegistered", e
+                    ));
+                }
+            };
+            data_offset += Struct::cairo_serialized_size(&schema);
+            return Ok(Event::ModelWithSchemaRegistered(
+                ModelWithSchemaRegistered {
+                    name,
+                    namespace,
+                    schema,
+                },
+            ));
         }
         let selector = event.keys[0];
         if selector
@@ -3129,6 +3374,53 @@ impl TryFrom<&starknet::core::types::Event> for Event {
                 class_hash,
                 address,
             }));
+        }
+        let selector = event.keys[0];
+        if selector
+            == starknet::core::utils::get_selector_from_name("ModelWithSchemaRegistered")
+                .unwrap_or_else(|_| panic!("Invalid selector for {}", "ModelWithSchemaRegistered"))
+        {
+            let mut key_offset = 0 + 1;
+            let mut data_offset = 0;
+            let name =
+                match cainome::cairo_serde::ByteArray::cairo_deserialize(&event.keys, key_offset) {
+                    Ok(v) => v,
+                    Err(e) => {
+                        return Err(format!(
+                            "Could not deserialize field {} for {}: {:?}",
+                            "name", "ModelWithSchemaRegistered", e
+                        ));
+                    }
+                };
+            key_offset += cainome::cairo_serde::ByteArray::cairo_serialized_size(&name);
+            let namespace =
+                match cainome::cairo_serde::ByteArray::cairo_deserialize(&event.keys, key_offset) {
+                    Ok(v) => v,
+                    Err(e) => {
+                        return Err(format!(
+                            "Could not deserialize field {} for {}: {:?}",
+                            "namespace", "ModelWithSchemaRegistered", e
+                        ));
+                    }
+                };
+            key_offset += cainome::cairo_serde::ByteArray::cairo_serialized_size(&namespace);
+            let schema = match Struct::cairo_deserialize(&event.data, data_offset) {
+                Ok(v) => v,
+                Err(e) => {
+                    return Err(format!(
+                        "Could not deserialize field {} for {}: {:?}",
+                        "schema", "ModelWithSchemaRegistered", e
+                    ));
+                }
+            };
+            data_offset += Struct::cairo_serialized_size(&schema);
+            return Ok(Event::ModelWithSchemaRegistered(
+                ModelWithSchemaRegistered {
+                    name,
+                    namespace,
+                    schema,
+                },
+            ));
         }
         let selector = event.keys[0];
         if selector
@@ -4564,6 +4856,111 @@ impl cainome::cairo_serde::CairoSerde for Resource {
                 return Err(cainome::cairo_serde::Error::Deserialize(format!(
                     "Index not handle for enum {}",
                     "Resource"
+                )));
+            }
+        }
+    }
+}
+#[derive(Clone, serde::Serialize, serde::Deserialize, PartialEq, Debug)]
+pub enum Ty {
+    Primitive(starknet::core::types::Felt),
+    Struct(Struct),
+    Enum(Enum),
+    Tuple(Vec<Ty>),
+    Array(Vec<Ty>),
+    ByteArray,
+    FixedArray((Vec<Ty>, u32)),
+}
+impl cainome::cairo_serde::CairoSerde for Ty {
+    type RustType = Self;
+    const SERIALIZED_SIZE: std::option::Option<usize> = std::option::Option::None;
+    #[inline]
+    fn cairo_serialized_size(__rust: &Self::RustType) -> usize {
+        match __rust {
+            Ty::Primitive(val) => starknet::core::types::Felt::cairo_serialized_size(val) + 1,
+            Ty::Struct(val) => Struct::cairo_serialized_size(val) + 1,
+            Ty::Enum(val) => Enum::cairo_serialized_size(val) + 1,
+            Ty::Tuple(val) => Vec::<Ty>::cairo_serialized_size(val) + 1,
+            Ty::Array(val) => Vec::<Ty>::cairo_serialized_size(val) + 1,
+            Ty::ByteArray => 1,
+            Ty::FixedArray(val) => <(Vec<Ty>, u32)>::cairo_serialized_size(val) + 1,
+            _ => 0,
+        }
+    }
+    fn cairo_serialize(__rust: &Self::RustType) -> Vec<starknet::core::types::Felt> {
+        match __rust {
+            Ty::Primitive(val) => {
+                let mut temp = vec![];
+                temp.extend(usize::cairo_serialize(&0usize));
+                temp.extend(starknet::core::types::Felt::cairo_serialize(val));
+                temp
+            }
+            Ty::Struct(val) => {
+                let mut temp = vec![];
+                temp.extend(usize::cairo_serialize(&1usize));
+                temp.extend(Struct::cairo_serialize(val));
+                temp
+            }
+            Ty::Enum(val) => {
+                let mut temp = vec![];
+                temp.extend(usize::cairo_serialize(&2usize));
+                temp.extend(Enum::cairo_serialize(val));
+                temp
+            }
+            Ty::Tuple(val) => {
+                let mut temp = vec![];
+                temp.extend(usize::cairo_serialize(&3usize));
+                temp.extend(Vec::<Ty>::cairo_serialize(val));
+                temp
+            }
+            Ty::Array(val) => {
+                let mut temp = vec![];
+                temp.extend(usize::cairo_serialize(&4usize));
+                temp.extend(Vec::<Ty>::cairo_serialize(val));
+                temp
+            }
+            Ty::ByteArray => usize::cairo_serialize(&5usize),
+            Ty::FixedArray(val) => {
+                let mut temp = vec![];
+                temp.extend(usize::cairo_serialize(&6usize));
+                temp.extend(<(Vec<Ty>, u32)>::cairo_serialize(val));
+                temp
+            }
+            _ => vec![],
+        }
+    }
+    fn cairo_deserialize(
+        __felts: &[starknet::core::types::Felt],
+        __offset: usize,
+    ) -> cainome::cairo_serde::Result<Self::RustType> {
+        let __f = __felts[__offset];
+        let __index = u128::from_be_bytes(__f.to_bytes_be()[16..].try_into().unwrap());
+        match __index as usize {
+            0usize => Ok(Ty::Primitive(
+                starknet::core::types::Felt::cairo_deserialize(__felts, __offset + 1)?,
+            )),
+            1usize => Ok(Ty::Struct(Struct::cairo_deserialize(
+                __felts,
+                __offset + 1,
+            )?)),
+            2usize => Ok(Ty::Enum(Enum::cairo_deserialize(__felts, __offset + 1)?)),
+            3usize => Ok(Ty::Tuple(Vec::<Ty>::cairo_deserialize(
+                __felts,
+                __offset + 1,
+            )?)),
+            4usize => Ok(Ty::Array(Vec::<Ty>::cairo_deserialize(
+                __felts,
+                __offset + 1,
+            )?)),
+            5usize => Ok(Ty::ByteArray),
+            6usize => Ok(Ty::FixedArray(<(Vec<Ty>, u32)>::cairo_deserialize(
+                __felts,
+                __offset + 1,
+            )?)),
+            _ => {
+                return Err(cainome::cairo_serde::Error::Deserialize(format!(
+                    "Index not handle for enum {}",
+                    "Ty"
                 )));
             }
         }

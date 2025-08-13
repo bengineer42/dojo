@@ -1,6 +1,6 @@
 use dojo::model::{Model, ModelStorage, ModelValueStorage};
 use dojo::world::WorldStorage;
-use dojo_cairo_test::{NamespaceDef, TestResource, spawn_test_world};
+use dojo_snf_test::{NamespaceDef, TestResource, spawn_test_world};
 
 #[derive(Copy, Drop, Serde, PartialEq)]
 #[dojo::model]
@@ -87,11 +87,7 @@ const LARGE_QUINTUPLE_SCHEMA: LargeQuintupleSchema = LargeQuintupleSchema {
 fn namespace_def() -> NamespaceDef {
     NamespaceDef {
         namespace: "dojo_cairo_test",
-        resources: [
-            TestResource::Model(m_Single::TEST_CLASS_HASH.try_into().unwrap()),
-            TestResource::Model(m_Large::TEST_CLASS_HASH.try_into().unwrap()),
-        ]
-            .span(),
+        resources: [TestResource::Model("Single"), TestResource::Model("Large")].span(),
     }
 }
 

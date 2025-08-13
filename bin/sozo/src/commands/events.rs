@@ -200,6 +200,10 @@ async fn match_event<P: Provider + Send + Sync>(
                 e.address.0
             ),
         ),
+        WorldEvent::ModelWithSchemaRegistered(e) => (
+            "Model registered with schema".to_string(),
+            format!("Namespace: {}\nName: {}", e.namespace.to_string()?, e.name.to_string()?,),
+        ),
         WorldEvent::EventRegistered(e) => (
             "Event registered".to_string(),
             format!(
