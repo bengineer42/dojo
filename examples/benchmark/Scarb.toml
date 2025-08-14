@@ -1,5 +1,5 @@
 [package]
-cairo-version = "=2.11.4"
+cairo-version = "=2.12.0"
 name = "dojo_benchmark"
 version = "0.1.0"
 edition = "2024_07"
@@ -13,11 +13,11 @@ allowed-libfuncs-list.name = "experimental"
 [dependencies]
 dojo = { path = "../../crates/dojo/core" }
 dojo_macros = { path = "../../crates/dojo/macros" }
-starknet = "2.11.4"
+starknet = "2.12.0"
 
 [dev-dependencies]
 snforge_std = "0.43.1"
-assert_macros = "2.11.4"
+assert_macros = "2.12.0"
 dojo_snf_test = { path = "../../crates/dojo/dojo-snf-test" }
 
 
