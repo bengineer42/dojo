@@ -69,9 +69,9 @@ impl DojoFormatter {
         format!("let {member_name} = {path}::<{member_ty}>::deserialize(ref values)?;\n")
     }
 
-    pub fn serialize_keys_and_values(
+    pub fn serialize_keys_and_values<'db>(
         db: &dyn SyntaxGroup,
-        members: impl Iterator<Item = MemberAst>,
+        members: impl Iterator<Item = MemberAst<'db>>,
         serialized_keys: &mut Vec<String>,
         serialized_values: &mut Vec<String>,
         use_serde: bool,
@@ -99,7 +99,6 @@ impl DojoFormatter {
             params
                 .generic_params(db)
                 .elements(db)
-                .iter()
                 .filter_map(|el| {
                     if let GenericParam::Type(typ) = el {
                         Some(typ.name(db).text(db).to_string())

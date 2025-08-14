@@ -2,9 +2,9 @@ use cairo_lang_macro::{Diagnostic, ProcMacroResult, TokenStream};
 use cairo_lang_parser::utils::SimpleParserDatabase;
 use cairo_lang_syntax::node::ast::{ItemEnum, OptionTypeClause, Variant};
 use cairo_lang_syntax::node::helpers::QueryAttrs;
-use cairo_lang_syntax::node::Terminal;
+use cairo_lang_syntax::node::{Terminal, TypedSyntaxNode};
 
-use crate::helpers::{debug_store_expand, DiagnosticsExt, DojoChecker, ProcMacroResultExt};
+use crate::helpers::{DiagnosticsExt, DojoChecker, DojoFormatter, ProcMacroResultExt};
 
 #[derive(Debug)]
 pub struct DojoEnumIntrospect {
@@ -22,8 +22,8 @@ impl DojoEnumIntrospect {
         is_packed: bool,
     ) -> ProcMacroResult {
         let mut introspect = DojoEnumIntrospect::new();
-
-        let derive_attrs = enum_ast.attributes(db).query_attr(db, "derive");
+        let attr = enum_ast.attributes(db);
+        let derive_attrs = attr.query_attr(db, "derive");
 
         DojoChecker::check_derive_conflicts(db, &mut introspect.diagnostics, derive_attrs);
 

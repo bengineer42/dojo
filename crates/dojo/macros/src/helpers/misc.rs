@@ -2,7 +2,7 @@ use cairo_lang_parser::utils::SimpleParserDatabase;
 use cairo_lang_syntax::node::ast::Member;
 use cairo_lang_syntax::node::{Terminal, TypedSyntaxNode};
 use dojo_types::naming;
-use starknet_crypto::{Felt, poseidon_hash_many};
+use starknet_crypto::{poseidon_hash_many, Felt};
 
 #[inline(always)]
 pub fn get_serialization_path(use_serde: bool) -> String {
@@ -15,11 +15,11 @@ pub fn get_serialization_path(use_serde: bool) -> String {
 
 /// Compute a unique hash based on the element name and types and names of members.
 /// This hash is used in element contracts to ensure uniqueness.
-pub fn compute_unique_hash(
-    db: &SimpleParserDatabase,
+pub fn compute_unique_hash<'db>(
+    db: &'db SimpleParserDatabase,
     element_name: &str,
     is_packed: bool,
-    members: impl Iterator<Item = Member>,
+    members: impl Iterator<Item = Member<'db>>,
 ) -> Felt {
     let mut hashes = vec![
         if is_packed { Felt::ONE } else { Felt::ZERO },

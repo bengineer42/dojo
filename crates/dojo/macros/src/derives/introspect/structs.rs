@@ -6,9 +6,7 @@ use cairo_lang_syntax::node::{Terminal, TypedSyntaxNode};
 use starknet::core::utils::get_selector_from_name;
 
 use crate::constants::CAIRO_DELIMITERS;
-use crate::helpers::{
-    debug_store_expand, DiagnosticsExt, DojoChecker, DojoFormatter, ProcMacroResultExt,
-};
+use crate::helpers::{DiagnosticsExt, DojoChecker, DojoFormatter, ProcMacroResultExt};
 
 #[derive(Debug)]
 pub struct DojoStructIntrospect {
@@ -20,14 +18,14 @@ impl DojoStructIntrospect {
         Self { diagnostics: vec![] }
     }
 
-    pub fn process(
-        db: &SimpleParserDatabase,
+    pub fn process<'db>(
+        db: &'db SimpleParserDatabase,
         struct_ast: &ItemStruct,
         is_packed: bool,
     ) -> ProcMacroResult {
         let mut introspect = DojoStructIntrospect::new();
-
-        let derive_attrs = struct_ast.attributes(db).query_attr(db, "derive");
+        let all_attrs = struct_ast.attributes(db);
+        let derive_attrs = all_attrs.query_attr(db, "derive");
 
         DojoChecker::check_derive_conflicts(db, &mut introspect.diagnostics, derive_attrs);
 

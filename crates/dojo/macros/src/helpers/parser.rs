@@ -4,7 +4,7 @@ use cairo_lang_syntax::attribute::structured::{AttributeArgVariant, AttributeStr
 use cairo_lang_syntax::node::ast::{Attribute, Member as MemberAst};
 use cairo_lang_syntax::node::helpers::QueryAttrs;
 use cairo_lang_syntax::node::kind::SyntaxKind::{ExprParenthesized, ItemModule, ItemStruct};
-use cairo_lang_syntax::node::{Terminal, TypedSyntaxNode, ast};
+use cairo_lang_syntax::node::{ast, Terminal, TypedSyntaxNode};
 
 use crate::helpers::{DiagnosticsExt, Member};
 
@@ -13,10 +13,10 @@ pub struct DojoParser {}
 /// DojoParser provides some functions to parse TokenStream/SyntaxNode.
 impl DojoParser {
     /// Parse an input token stream and return a ItemStruct syntax node if found.
-    pub(crate) fn parse_and_find_struct(
-        db: &SimpleParserDatabase,
+    pub(crate) fn parse_and_find_struct<'db>(
+        db: &'db SimpleParserDatabase,
         token_stream: &TokenStream,
-    ) -> Option<ast::ItemStruct> {
+    ) -> Option<ast::ItemStruct<'db>> {
         let (root_node, _diagnostics) = db.parse_token_stream(token_stream);
 
         for n in root_node.descendants(db) {
@@ -30,10 +30,10 @@ impl DojoParser {
     }
 
     /// Parse an input token stream and return a ItemModule syntax node if found.
-    pub(crate) fn parse_and_find_module(
-        db: &SimpleParserDatabase,
+    pub(crate) fn parse_and_find_module<'db>(
+        db: &'db SimpleParserDatabase,
         token_stream: &TokenStream,
-    ) -> Option<ast::ItemModule> {
+    ) -> Option<ast::ItemModule<'db>> {
         let (root_node, _diagnostics) = db.parse_token_stream(token_stream);
 
         for n in root_node.descendants(db) {
@@ -48,10 +48,10 @@ impl DojoParser {
 
     /// Parse the input token stream of an inline proc macro as a
     /// parenthesized expression.
-    pub(crate) fn parse_inline_args(
-        db: &SimpleParserDatabase,
+    pub(crate) fn parse_inline_args<'db>(
+        db: &'db SimpleParserDatabase,
         token_stream: &TokenStream,
-    ) -> Option<ast::ExprParenthesized> {
+    ) -> Option<ast::ExprParenthesized<'db>> {
         let (root_node, _diagnostics) = db.parse_token_stream_expr(token_stream);
 
         for n in root_node.descendants(db) {
@@ -64,9 +64,9 @@ impl DojoParser {
     }
 
     /// Parse a list of member syntax nodes into a list of `Member`.
-    pub(crate) fn parse_members(
-        db: &SimpleParserDatabase,
-        members: impl Iterator<Item = MemberAst>,
+    pub(crate) fn parse_members<'db>(
+        db: &'db SimpleParserDatabase,
+        members: impl Iterator<Item = MemberAst<'db>>,
         diagnostics: &mut Vec<Diagnostic>,
     ) -> Vec<Member> {
         let mut parsing_keys = true;
@@ -114,10 +114,10 @@ impl DojoParser {
     /// ```
     ///
     /// And this function will return `["Introspect"]`.
-    pub fn extract_derive_attr_names(
-        db: &SimpleParserDatabase,
+    pub fn extract_derive_attr_names<'db>(
+        db: &'db SimpleParserDatabase,
         diagnostics: &mut Vec<Diagnostic>,
-        attrs: impl Iterator<Item = Attribute>,
+        attrs: impl Iterator<Item = Attribute<'db>>,
     ) -> Vec<String> {
         attrs
             .filter_map(|attr| {
