@@ -69,9 +69,9 @@ impl DojoFormatter {
         format!("let {member_name} = {path}::<{member_ty}>::deserialize(ref values)?;\n")
     }
 
-    pub fn serialize_keys_and_values<'db>(
+    pub fn serialize_keys_and_values(
         db: &dyn SyntaxGroup,
-        members: impl Iterator<Item = MemberAst<'db>>,
+        members: impl Iterator<Item = MemberAst>,
         serialized_keys: &mut Vec<String>,
         serialized_values: &mut Vec<String>,
         use_serde: bool,

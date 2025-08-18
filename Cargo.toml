@@ -100,28 +100,28 @@ bytes = "1.6"
 
 cairo-lang-macro = "0.2.0"
 
-cairo-lang-compiler = { git = "https://github.com/starkware-libs/cairo" }
-cairo-lang-debug = { git = "https://github.com/starkware-libs/cairo" }
-cairo-lang-defs = { git = "https://github.com/starkware-libs/cairo" }
-cairo-lang-diagnostics = { git = "https://github.com/starkware-libs/cairo" }
-cairo-lang-filesystem = { git = "https://github.com/starkware-libs/cairo" }
-cairo-lang-formatter = { git = "https://github.com/starkware-libs/cairo" }
-cairo-lang-lowering = { git = "https://github.com/starkware-libs/cairo" }
-cairo-lang-parser = { git = "https://github.com/starkware-libs/cairo" }
-cairo-lang-plugins = { git = "https://github.com/starkware-libs/cairo", features = [ "testing" ] }
+cairo-lang-compiler = { git = "https://github.com/starkware-libs/cairo", tag = "v2.12.0" }
+cairo-lang-debug = { git = "https://github.com/starkware-libs/cairo", tag = "v2.12.0" }
+cairo-lang-defs = { git = "https://github.com/starkware-libs/cairo", tag = "v2.12.0" }
+cairo-lang-diagnostics = { git = "https://github.com/starkware-libs/cairo", tag = "v2.12.0" }
+cairo-lang-filesystem = { git = "https://github.com/starkware-libs/cairo", tag = "v2.12.0" }
+cairo-lang-formatter = { git = "https://github.com/starkware-libs/cairo", tag = "v2.12.0" }
+cairo-lang-lowering = { git = "https://github.com/starkware-libs/cairo", tag = "v2.12.0" }
+cairo-lang-parser = { git = "https://github.com/starkware-libs/cairo", tag = "v2.12.0" }
+cairo-lang-plugins = { git = "https://github.com/starkware-libs/cairo", features = [ "testing" ], tag = "v2.12.0" }
 cairo-lang-primitive-token = "1"
-cairo-lang-project = { git = "https://github.com/starkware-libs/cairo" }
-cairo-lang-runner = { git = "https://github.com/starkware-libs/cairo" }
-cairo-lang-semantic = { git = "https://github.com/starkware-libs/cairo" }
-cairo-lang-sierra = { git = "https://github.com/starkware-libs/cairo" }
-cairo-lang-sierra-generator = { git = "https://github.com/starkware-libs/cairo" }
-cairo-lang-sierra-to-casm = { git = "https://github.com/starkware-libs/cairo" }
-cairo-lang-starknet = { git = "https://github.com/starkware-libs/cairo" }
-cairo-lang-starknet-classes = { git = "https://github.com/starkware-libs/cairo" }
-cairo-lang-syntax = { git = "https://github.com/starkware-libs/cairo" }
-cairo-lang-test-plugin = { git = "https://github.com/starkware-libs/cairo" }
-cairo-lang-test-utils = { git = "https://github.com/starkware-libs/cairo" }
-cairo-lang-utils = { git = "https://github.com/starkware-libs/cairo" }
+cairo-lang-project = { git = "https://github.com/starkware-libs/cairo", tag = "v2.12.0" }
+cairo-lang-runner = { git = "https://github.com/starkware-libs/cairo", tag = "v2.12.0" }
+cairo-lang-semantic = { git = "https://github.com/starkware-libs/cairo", tag = "v2.12.0" }
+cairo-lang-sierra = { git = "https://github.com/starkware-libs/cairo", tag = "v2.12.0" }
+cairo-lang-sierra-generator = { git = "https://github.com/starkware-libs/cairo", tag = "v2.12.0" }
+cairo-lang-sierra-to-casm = { git = "https://github.com/starkware-libs/cairo", tag = "v2.12.0" }
+cairo-lang-starknet = { git = "https://github.com/starkware-libs/cairo", tag = "v2.12.0" }
+cairo-lang-starknet-classes = { git = "https://github.com/starkware-libs/cairo", tag = "v2.12.0" }
+cairo-lang-syntax = { git = "https://github.com/starkware-libs/cairo", tag = "v2.12.0" }
+cairo-lang-test-plugin = { git = "https://github.com/starkware-libs/cairo", tag = "v2.12.0" }
+cairo-lang-test-utils = { git = "https://github.com/starkware-libs/cairo", tag = "v2.12.0" }
+cairo-lang-utils = { git = "https://github.com/starkware-libs/cairo", tag = "v2.12.0" }
 cairo-vm = "1.0.0-rc4"
 camino = { version = "1.1.2", features = [ "serde1" ] }
 chrono = { version = "0.4.24", features = [ "serde" ] }
@@ -168,8 +168,8 @@ rstest_reuse = "0.6.0"
 salsa = "0.16.1"
 
 # version 2.12.0+2.12.0
-scarb-metadata = "1.15.1"
-scarb-ui = "0.1.7"
+scarb-metadata = { git = "https://github.com/software-mansion/scarb", tag = "v2.12.1-rc.0" }
+scarb-ui = { git = "https://github.com/software-mansion/scarb", tag = "v2.12.1-rc.0" }
 
 semver = "1.0.5"
 serde = { version = "1.0", features = [ "derive" ] }

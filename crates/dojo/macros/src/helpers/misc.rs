@@ -15,11 +15,11 @@ pub fn get_serialization_path(use_serde: bool) -> String {
 
 /// Compute a unique hash based on the element name and types and names of members.
 /// This hash is used in element contracts to ensure uniqueness.
-pub fn compute_unique_hash<'db>(
-    db: &'db SimpleParserDatabase,
+pub fn compute_unique_hash(
+    db: &SimpleParserDatabase,
     element_name: &str,
     is_packed: bool,
-    members: impl Iterator<Item = Member<'db>>,
+    members: impl Iterator<Item = Member>,
 ) -> Felt {
     let mut hashes = vec![
         if is_packed { Felt::ONE } else { Felt::ZERO },
