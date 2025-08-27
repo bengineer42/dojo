@@ -40,11 +40,21 @@ pub struct TxnConfig {
     pub walnut: bool,
     /// The fee configuration to use for the transaction.
     pub fee_config: FeeConfig,
+    /// The maximum number of calls to send in a single transaction.
+    /// This number could vary depending on the calls content, and is mostly
+    /// here to ensure the migration is not stuck if too much resources have to be registered.
+    pub max_calls: Option<usize>,
 }
 
 #[derive(Debug, Clone)]
 pub enum TxnAction {
-    Send { wait: bool, receipt: bool, fee_config: FeeConfig, walnut: bool },
+    Send {
+        wait: bool,
+        receipt: bool,
+        fee_config: FeeConfig,
+        walnut: bool,
+        max_calls: Option<usize>,
+    },
     Estimate,
     Simulate,
 }
@@ -92,10 +102,8 @@ pub trait TransactionExt<T> {
     type R;
     type U;
 
-    /// Sets `fee_estimate_multiplier` and `max_fee_raw` from `TxnConfig` if its present before
+    /// Sets `l1_gas` and `l1_gas_price` from `TxnConfig` if its present before
     /// calling `send` method on the respective type.
-    /// NOTE: If both are specified `max_fee_raw` will take precedence and `fee_estimate_multiplier`
-    /// will be ignored by `starknet-rs`
     async fn send_with_cfg(self, txn_config: &TxnConfig) -> Result<Self::R, Self::U>;
 }
 
@@ -183,8 +191,8 @@ pub fn parse_block_id(block_str: String) -> Result<BlockId> {
         let hash = Felt::from_hex(&block_str)
             .map_err(|_| anyhow!("Unable to parse block hash: {}", block_str))?;
         Ok(BlockId::Hash(hash))
-    } else if block_str.eq("pending") {
-        Ok(BlockId::Tag(BlockTag::Pending))
+    } else if block_str.eq("preconfirmed") {
+        Ok(BlockId::Tag(BlockTag::PreConfirmed))
     } else if block_str.eq("latest") {
         Ok(BlockId::Tag(BlockTag::Latest))
     } else {
@@ -249,7 +257,7 @@ pub async fn get_predeployed_accounts<A: ConnectedAccount>(
                 ExecutionEncoding::New,
             );
 
-            account.set_block_id(BlockId::Tag(BlockTag::Pending));
+            account.set_block_id(BlockId::Tag(BlockTag::PreConfirmed));
 
             declarers.push(account);
         }

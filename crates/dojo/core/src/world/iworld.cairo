@@ -3,7 +3,6 @@
 use dojo::meta::Layout;
 use dojo::model::{ModelIndex, ResourceMetadata};
 use starknet::{ClassHash, ContractAddress};
-
 use super::resource::Resource;
 
 #[starknet::interface]
@@ -30,7 +29,7 @@ pub trait IWorld<T> {
     /// Issues an autoincremented id to the caller.
     /// This functionalities is useful to generate unique, but sequential ids.
     ///
-    /// Note: This functionalities may impact performances since transaction paralellisation can't
+    /// Note: This functionalities may impact performances since transaction parallelisation can't
     /// be achieved since the same storage slot is being written.
     fn uuid(ref self: T) -> usize;
 
@@ -83,6 +82,24 @@ pub trait IWorld<T> {
         ref self: T, salt: felt252, namespace: ByteArray, class_hash: ClassHash,
     ) -> ContractAddress;
 
+    /// Registers an already deployed external contract.
+    ///
+    /// # Arguments
+    ///
+    /// * `namespace` - The namespace of the external contract.
+    /// * `contract_name` - The Starknet contract name.
+    /// * `instance_name` - A name given to this instance of `contract_name`.
+    /// * `contract_address` - The address of the deployed contract.
+    /// * `block_number` - The block number to use to start contract indexing.
+    fn register_external_contract(
+        ref self: T,
+        namespace: ByteArray,
+        contract_name: ByteArray,
+        instance_name: ByteArray,
+        contract_address: ContractAddress,
+        block_number: u64,
+    );
+
     /// Registers and declare a library associated with the world and returns the class_hash of
     /// newly declared library.
     ///
@@ -133,6 +150,22 @@ pub trait IWorld<T> {
     /// * `namespace` - The namespace of the contract to be upgraded.
     /// * `class_hash` - The class hash of the contract.
     fn upgrade_contract(ref self: T, namespace: ByteArray, class_hash: ClassHash) -> ClassHash;
+
+    /// Upgrades an already registered external contract with a new address.
+    ///
+    /// # Arguments
+
+    /// * `namespace` - The namespace of the external contract.
+    /// * `instance_name` - The contract instance name.
+    /// * `contract_address` - The new address of the deployed contract.
+    /// * `block_number` - The block number to use to start contract indexing.
+    fn upgrade_external_contract(
+        ref self: T,
+        namespace: ByteArray,
+        instance_name: ByteArray,
+        contract_address: ContractAddress,
+        block_number: u64,
+    );
 
     /// Emits a custom event that was previously registered in the world.
     /// The dojo event emission is permissioned, since data are collected by

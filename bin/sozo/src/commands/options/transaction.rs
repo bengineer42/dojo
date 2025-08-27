@@ -7,13 +7,11 @@ use dojo_utils::{FeeConfig, TxnAction, TxnConfig};
 pub struct TransactionOptions {
     #[arg(help_heading = "Transaction options - STRK")]
     #[arg(long, help = "Maximum L1 gas amount.")]
-    #[arg(conflicts_with_all = ["max_fee_raw", "fee_estimate_multiplier"])]
     #[arg(global = true)]
     pub gas: Option<u64>,
 
     #[arg(help_heading = "Transaction options - STRK")]
     #[arg(long, help = "Maximum L1 gas price in STRK.")]
-    #[arg(conflicts_with_all = ["max_fee_raw", "fee_estimate_multiplier"])]
     #[arg(global = true)]
     pub gas_price: Option<u128>,
 
@@ -37,6 +35,12 @@ pub struct TransactionOptions {
     #[arg(help = "Display the link to debug the transaction with Walnut.")]
     #[arg(global = true)]
     pub walnut: bool,
+
+    #[arg(long)]
+    #[arg(help = "Maximum number of calls to send in a single transaction. By default, there is \
+                  no limit and Sozo will attempt to send all the calls in one transaction.")]
+    #[arg(global = true)]
+    pub max_calls: Option<usize>,
 }
 
 impl TransactionOptions {
@@ -56,6 +60,7 @@ impl TransactionOptions {
                 receipt: self.receipt,
                 fee_config: FeeConfig { gas: self.gas, gas_price: self.gas_price },
                 walnut: self.walnut,
+                max_calls: self.max_calls,
             }),
         }
     }
@@ -70,6 +75,7 @@ impl TryFrom<TransactionOptions> for TxnConfig {
             receipt: value.receipt,
             walnut: value.walnut,
             fee_config: FeeConfig { gas: value.gas, gas_price: value.gas_price },
+            max_calls: value.max_calls,
         })
     }
 }
@@ -88,6 +94,7 @@ mod tests {
             gas: Some(1000),
             gas_price: Some(100),
             walnut: false,
+            max_calls: Some(10),
         };
 
         let config: TxnConfig = opts.try_into()?;
@@ -95,6 +102,7 @@ mod tests {
         assert!(config.wait);
         assert!(config.receipt);
         assert!(!config.walnut);
+        assert_eq!(config.max_calls, Some(10));
 
         assert_eq!(config.fee_config.gas, Some(1000));
         assert_eq!(config.fee_config.gas_price, Some(100));

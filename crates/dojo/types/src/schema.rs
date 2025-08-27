@@ -1,8 +1,6 @@
 use std::any::type_name;
-use std::str::FromStr;
 
 use cainome::cairo_serde::{ByteArray, CairoSerde};
-use crypto_bigint::U256;
 use indexmap::IndexMap;
 use itertools::Itertools;
 use num_traits::ToPrimitive;
@@ -50,6 +48,7 @@ pub enum Ty {
     Enum(Enum),
     Tuple(Vec<Ty>),
     Array(Vec<Ty>),
+    FixedSizeArray((Vec<Ty>, u32)),
     ByteArray(String),
 }
 
@@ -65,6 +64,13 @@ impl Ty {
                     format!("Array<{}>", inner.name())
                 } else {
                     "Array".to_string()
+                }
+            }
+            Ty::FixedSizeArray((ty, size)) => {
+                if let Some(ty) = ty.first() {
+                    format!("[{}; {}]", ty.name(), size)
+                } else {
+                    "[; 0]".to_string()
                 }
             }
             Ty::ByteArray(_) => "ByteArray".to_string(),
@@ -116,6 +122,15 @@ impl Ty {
         }
     }
 
+    /// If the `Ty` is a fixed size array, returns the associated [`Vec<Ty>`]. Returns `None`
+    /// otherwise.
+    pub fn as_fixed_size_array(&self) -> Option<&(Vec<Ty>, u32)> {
+        match self {
+            Ty::FixedSizeArray(tys) => Some(tys),
+            _ => None,
+        }
+    }
+
     /// If the `Ty` is a byte array, returns the associated [`String`]. Returns `None` otherwise.
     pub fn as_byte_array(&self) -> Option<&String> {
         match self {
@@ -144,6 +159,10 @@ impl Ty {
                         .unwrap_or(Err(PrimitiveError::MissingFieldElement))?;
                     felts.extend(option);
 
+                    // TODO: we should increment `option` is the model does not use the legacy
+                    // storage system. But is this `serialize` function still
+                    // used ?
+
                     for EnumOption { ty, .. } in &e.options {
                         serialize_inner(ty, felts)?;
                     }
@@ -162,6 +181,12 @@ impl Ty {
                         serialize_inner(item_ty, felts)?;
                     }
                 }
+                Ty::FixedSizeArray((items_ty, size)) => {
+                    let item_ty = &items_ty[0];
+                    for _ in 0..*size {
+                        serialize_inner(item_ty, felts)?;
+                    }
+                }
                 Ty::ByteArray(bytes) => {
                     let bytearray = ByteArray::from_string(bytes)?;
 
@@ -176,7 +201,11 @@ impl Ty {
         Ok(felts)
     }
 
-    pub fn deserialize(&mut self, felts: &mut Vec<Felt>) -> Result<(), PrimitiveError> {
+    pub fn deserialize(
+        &mut self,
+        felts: &mut Vec<Felt>,
+        legacy_storage: bool,
+    ) -> Result<(), PrimitiveError> {
         if felts.is_empty() {
             // return early if there are no felts to deserialize
             return Ok(());
@@ -188,27 +217,52 @@ impl Ty {
             }
             Ty::Struct(s) => {
                 for child in &mut s.children {
-                    child.ty.deserialize(felts)?;
+                    child.ty.deserialize(felts, legacy_storage)?;
                 }
             }
             Ty::Enum(e) => {
                 let value = felts.remove(0);
-                e.option = Some(value.to_u8().ok_or_else(|| PrimitiveError::ValueOutOfRange {
-                    r#type: type_name::<u8>(),
-                    value,
-                })?);
+                let actual_selector = value.to_u8().ok_or_else(|| {
+                    PrimitiveError::ValueOutOfRange { r#type: type_name::<u8>(), value }
+                })?;
 
-                match &e.options[e.option.unwrap() as usize].ty {
-                    // Skip deserializing the enum option if it has no type - unit type
-                    Ty::Tuple(tuple) if tuple.is_empty() => {}
-                    _ => {
-                        e.options[e.option.unwrap() as usize].ty.deserialize(felts)?;
+                let mut selector = actual_selector;
+
+                // Th new `DojoStore`` trait, enum variants indices start from 1. The 0 value is
+                // reserved for uninitialized enum.
+                if !legacy_storage {
+                    if selector == 0 {
+                        // We set to None here in case this is not the first time we deserialize
+                        // `self`. In which case, previous deserialization might have set the option
+                        // to Some.
+                        e.option = None;
+                        return Ok(());
+                    } else {
+                        // With the new storage system using `DojoStore` trait, variant indices
+                        // start from 1.
+                        selector -= 1;
                     }
                 }
+
+                e.option = Some(selector);
+
+                let selected_opt = e
+                    .options
+                    .get_mut(selector as usize)
+                    .ok_or_else(|| PrimitiveError::InvalidEnumSelector { actual_selector })?;
+
+                // No further deserialization needed if the enum variant is a unit type
+                if let Ty::Tuple(tuple) = &selected_opt.ty {
+                    if tuple.is_empty() {
+                        return Ok(());
+                    }
+                }
+
+                selected_opt.ty.deserialize(felts, legacy_storage)?;
             }
             Ty::Tuple(tys) => {
                 for ty in tys {
-                    ty.deserialize(felts)?;
+                    ty.deserialize(felts, legacy_storage)?;
                 }
             }
             Ty::Array(items_ty) => {
@@ -220,8 +274,14 @@ impl Ty {
                 let item_ty = items_ty.pop().unwrap();
                 for _ in 0..arr_len {
                     let mut cur_item_ty = item_ty.clone();
-                    cur_item_ty.deserialize(felts)?;
+                    cur_item_ty.deserialize(felts, legacy_storage)?;
                     items_ty.push(cur_item_ty);
+                }
+            }
+            Ty::FixedSizeArray((items_ty, size)) => {
+                debug_assert_eq!(items_ty.len(), *size as usize);
+                for elem in items_ty {
+                    elem.deserialize(felts, legacy_storage)?;
                 }
             }
             Ty::ByteArray(bytes) => {
@@ -313,6 +373,13 @@ impl Ty {
                     Some(Ty::Array(a1.clone()))
                 }
             }
+            (Ty::FixedSizeArray(a1), Ty::FixedSizeArray(a2)) => {
+                if a1 == a2 {
+                    None
+                } else {
+                    Some(Ty::FixedSizeArray(a1.clone()))
+                }
+            }
             (Ty::ByteArray(b1), Ty::ByteArray(b2)) => {
                 if b1 == b2 {
                     None
@@ -337,25 +404,7 @@ impl Ty {
     /// Convert a Ty to a JSON Value
     pub fn to_json_value(&self) -> Result<JsonValue, PrimitiveError> {
         match self {
-            Ty::Primitive(primitive) => match primitive {
-                Primitive::Bool(Some(v)) => Ok(json!(*v)),
-                Primitive::I8(Some(v)) => Ok(json!(*v)),
-                Primitive::I16(Some(v)) => Ok(json!(*v)),
-                Primitive::I32(Some(v)) => Ok(json!(*v)),
-                Primitive::I64(Some(_)) => Ok(json!(primitive.to_sql_value())),
-                Primitive::I128(Some(_)) => Ok(json!(primitive.to_sql_value())),
-                Primitive::U8(Some(v)) => Ok(json!(*v)),
-                Primitive::U16(Some(v)) => Ok(json!(*v)),
-                Primitive::U32(Some(v)) => Ok(json!(*v)),
-                Primitive::U64(Some(_)) => Ok(json!(primitive.to_sql_value())),
-                Primitive::U128(Some(_)) => Ok(json!(primitive.to_sql_value())),
-                Primitive::U256(Some(_)) => Ok(json!(primitive.to_sql_value())),
-                Primitive::Felt252(Some(_)) => Ok(json!(primitive.to_sql_value())),
-                Primitive::ClassHash(Some(_)) => Ok(json!(primitive.to_sql_value())),
-                Primitive::ContractAddress(Some(_)) => Ok(json!(primitive.to_sql_value())),
-                Primitive::EthAddress(Some(_)) => Ok(json!(primitive.to_sql_value())),
-                _ => Err(PrimitiveError::MissingFieldElement),
-            },
+            Ty::Primitive(primitive) => primitive.to_json_value(),
             Ty::Struct(s) => {
                 let mut obj = IndexMap::new();
                 for member in &s.children {
@@ -373,6 +422,17 @@ impl Ty {
                 let values: Result<Vec<_>, _> = items.iter().map(|ty| ty.to_json_value()).collect();
                 Ok(json!(values?))
             }
+            Ty::FixedSizeArray((items, size)) => {
+                let values: Result<Vec<_>, _> = items.iter().map(|ty| ty.to_json_value()).collect();
+
+                let value = json!(
+                    {
+                        "elements": values?,
+                        "size": size
+                    }
+                );
+                Ok(value)
+            }
             Ty::Tuple(items) => {
                 let values: Result<Vec<_>, _> = items.iter().map(|ty| ty.to_json_value()).collect();
                 Ok(json!(values?))
@@ -384,88 +444,9 @@ impl Ty {
     /// Parse a JSON Value into a Ty
     pub fn from_json_value(&mut self, value: JsonValue) -> Result<(), PrimitiveError> {
         match (self, value) {
-            (Ty::Primitive(primitive), value) => match primitive {
-                Primitive::Bool(v) => {
-                    if let JsonValue::Bool(b) = value {
-                        *v = Some(b);
-                    }
-                }
-                Primitive::I8(v) => {
-                    if let JsonValue::Number(n) = value {
-                        *v = n.as_i64().map(|n| n as i8);
-                    }
-                }
-                Primitive::I16(v) => {
-                    if let JsonValue::Number(n) = value {
-                        *v = n.as_i64().map(|n| n as i16);
-                    }
-                }
-                Primitive::I32(v) => {
-                    if let JsonValue::Number(n) = value {
-                        *v = n.as_i64().map(|n| n as i32);
-                    }
-                }
-                Primitive::I64(v) => {
-                    if let JsonValue::String(s) = value {
-                        *v = s.parse().ok();
-                    }
-                }
-                Primitive::I128(v) => {
-                    if let JsonValue::String(s) = value {
-                        *v = s.parse().ok();
-                    }
-                }
-                Primitive::U8(v) => {
-                    if let JsonValue::Number(n) = value {
-                        *v = n.as_u64().map(|n| n as u8);
-                    }
-                }
-                Primitive::U16(v) => {
-                    if let JsonValue::Number(n) = value {
-                        *v = n.as_u64().map(|n| n as u16);
-                    }
-                }
-                Primitive::U32(v) => {
-                    if let JsonValue::Number(n) = value {
-                        *v = n.as_u64().map(|n| n as u32);
-                    }
-                }
-                Primitive::U64(v) => {
-                    if let JsonValue::String(s) = value {
-                        *v = s.parse().ok();
-                    }
-                }
-                Primitive::U128(v) => {
-                    if let JsonValue::String(s) = value {
-                        *v = s.parse().ok();
-                    }
-                }
-                Primitive::U256(v) => {
-                    if let JsonValue::String(s) = value {
-                        *v = Some(U256::from_be_hex(s.trim_start_matches("0x")));
-                    }
-                }
-                Primitive::Felt252(v) => {
-                    if let JsonValue::String(s) = value {
-                        *v = Felt::from_str(&s).ok();
-                    }
-                }
-                Primitive::ClassHash(v) => {
-                    if let JsonValue::String(s) = value {
-                        *v = Felt::from_str(&s).ok();
-                    }
-                }
-                Primitive::ContractAddress(v) => {
-                    if let JsonValue::String(s) = value {
-                        *v = Felt::from_str(&s).ok();
-                    }
-                }
-                Primitive::EthAddress(v) => {
-                    if let JsonValue::String(s) = value {
-                        *v = Felt::from_str(&s).ok();
-                    }
-                }
-            },
+            (Ty::Primitive(primitive), value) => {
+                primitive.from_json_value(value)?;
+            }
             (Ty::Struct(s), JsonValue::Object(obj)) => {
                 for member in &mut s.children {
                     if let Some(value) = obj.get(&member.name) {
@@ -482,6 +463,41 @@ impl Ty {
                 }
             }
             (Ty::Array(items), JsonValue::Array(values)) => {
+                let template = items[0].clone();
+                items.clear();
+                for value in values {
+                    let mut item = template.clone();
+                    item.from_json_value(value)?;
+                    items.push(item);
+                }
+            }
+            (Ty::FixedSizeArray((items, size)), JsonValue::Object(obj)) => {
+                if let (Some(JsonValue::Array(values)), Some(JsonValue::Number(expected_size))) =
+                    (obj.get("elements"), obj.get("size"))
+                {
+                    if let Some(expected_size) = expected_size.as_u64() {
+                        if expected_size != *size as u64 {
+                            return Err(PrimitiveError::TypeMismatch);
+                        }
+                        let template = items[0].clone();
+                        items.clear();
+                        for value in values {
+                            let mut item = template.clone();
+                            item.from_json_value(value.clone())?;
+                            items.push(item);
+                        }
+                    } else {
+                        return Err(PrimitiveError::TypeMismatch);
+                    }
+                } else {
+                    return Err(PrimitiveError::TypeMismatch);
+                }
+            }
+            // Fallback for backward compatibility with simple array format
+            (Ty::FixedSizeArray((items, size)), JsonValue::Array(values)) => {
+                if values.len() != *size as usize {
+                    return Err(PrimitiveError::TypeMismatch);
+                }
                 let template = items[0].clone();
                 items.clear();
                 for value in values {
@@ -559,6 +575,10 @@ impl std::fmt::Display for Ty {
                     Some(format!("tuple({})", tuple.iter().map(|ty| ty.name()).join(", ")))
                 }
                 Ty::Array(items_ty) => Some(format!("Array<{}>", items_ty[0].name())),
+                Ty::FixedSizeArray((items_ty, length)) => {
+                    let item_ty = &items_ty[0];
+                    Some(format!("[{}; {}]", item_ty.name(), *length))
+                }
                 Ty::ByteArray(_) => Some("ByteArray".to_string()),
                 _ => None,
             })
@@ -739,8 +759,11 @@ fn format_member(m: &Member) -> String {
 
 #[cfg(test)]
 mod tests {
+    use assert_matches::assert_matches;
     use crypto_bigint::U256;
+    use num_traits::FromPrimitive;
     use starknet::core::types::Felt;
+    use starknet::macros::felt;
 
     use super::*;
     use crate::primitive::Primitive;
@@ -950,5 +973,113 @@ mod tests {
         // Test no differences
         let same_struct = struct2.diff(&struct2);
         assert!(same_struct.is_none());
+    }
+
+    #[test]
+    fn ty_deserialize_legacy_enum() {
+        // enum Direction {
+        //     Up,
+        //     Bottom,
+        //     Left,
+        //     Right,
+        // }
+
+        let mut ty = Ty::Enum(Enum {
+            name: "Direction".to_string(),
+            option: None,
+            options: vec![
+                EnumOption { name: "Up".to_string(), ty: Ty::Tuple(Vec::new()) },
+                EnumOption { name: "Bottom".to_string(), ty: Ty::Tuple(Vec::new()) },
+                EnumOption { name: "Left".to_string(), ty: Ty::Tuple(Vec::new()) },
+                EnumOption { name: "Right".to_string(), ty: Ty::Tuple(Vec::new()) },
+            ],
+        });
+
+        for i in 0..4 {
+            let mut felts = vec![Felt::from_i32(i).unwrap()];
+            ty.deserialize(&mut felts, true).expect("failed to deserialize");
+            assert!(felts.is_empty());
+            assert_matches!(&ty, Ty::Enum(Enum {  option, .. }) => assert_eq!(option, &Some(i as u8)));
+        }
+
+        let mut felts = vec![felt!("0x4")];
+        let result = ty.deserialize(&mut felts, true);
+        assert!(felts.is_empty());
+        assert_matches!(&result, Err(PrimitiveError::InvalidEnumSelector { actual_selector: 4 }));
+    }
+
+    #[test]
+    fn ty_deserialize_enum() {
+        // enum Direction {
+        //     Up,
+        //     Bottom,
+        //     Left,
+        //     Right,
+        // }
+
+        let mut ty = Ty::Enum(Enum {
+            name: "Direction".to_string(),
+            option: None,
+            options: vec![
+                EnumOption { name: "Up".to_string(), ty: Ty::Tuple(Vec::new()) },
+                EnumOption { name: "Bottom".to_string(), ty: Ty::Tuple(Vec::new()) },
+                EnumOption { name: "Left".to_string(), ty: Ty::Tuple(Vec::new()) },
+                EnumOption { name: "Right".to_string(), ty: Ty::Tuple(Vec::new()) },
+            ],
+        });
+
+        for i in 0..4 {
+            let mut felts = vec![Felt::from_i32(i + 1).unwrap()]; // non legacy store enum indices starts from 1
+            ty.deserialize(&mut felts, false).expect("failed to deserialize");
+            assert!(felts.is_empty());
+            assert_matches!(&ty, Ty::Enum(Enum {  option, .. }) => assert_eq!(option, &Some(i as u8)));
+        }
+
+        let mut felts = vec![felt!("0x5")];
+        let result = ty.deserialize(&mut felts, false);
+        assert!(felts.is_empty());
+        assert_matches!(&result, Err(PrimitiveError::InvalidEnumSelector { actual_selector: 5 }));
+
+        // deserializes from an uninitialized storage
+        let mut felts = vec![felt!("0x0")];
+        ty.deserialize(&mut felts, false).expect("failed to deserialize");
+        assert!(felts.is_empty());
+        assert_matches!(&ty, Ty::Enum(Enum { option: None, .. }));
+    }
+
+    #[test]
+    fn ty_serde_fixed_size_array() {
+        // serialization ------------------------
+
+        let elems = vec![Ty::Primitive(Primitive::Felt252(Some(felt!("0x1")))); 3]; // [felt252; 3]
+        let ty = Ty::FixedSizeArray((elems.clone(), 3));
+
+        let expected_json = json!({
+            "size": 3,
+            "elements": elems.iter().map(|e| e.to_json_value().unwrap()).collect::<Vec<_>>(),
+        });
+
+        let actual_json = ty.to_json_value().expect("failed to serialize");
+        assert_eq!(actual_json, expected_json);
+
+        // deserialization ------------------------
+
+        let elems = vec![Ty::Primitive(Primitive::Felt252(None)); 3]; // [felt252; 3]
+        let mut ty = Ty::FixedSizeArray((elems, 3));
+
+        let mut felts = vec![felt!("0x1"), felt!("0x2"), felt!("0x3")];
+        ty.deserialize(&mut felts, false).expect("failed to deserialize");
+        assert!(felts.is_empty());
+
+        let expected_elems = vec![
+            Ty::Primitive(Primitive::Felt252(Some(felt!("0x1")))),
+            Ty::Primitive(Primitive::Felt252(Some(felt!("0x2")))),
+            Ty::Primitive(Primitive::Felt252(Some(felt!("0x3")))),
+        ];
+
+        assert_matches!(&ty, Ty::FixedSizeArray((elements, size)) => {
+            assert_eq!(elements, &expected_elems);
+            assert_eq!(size, &3);
+        });
     }
 }

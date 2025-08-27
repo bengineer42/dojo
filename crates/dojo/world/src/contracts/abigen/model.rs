@@ -16,7 +16,9 @@ impl<A: starknet::accounts::ConnectedAccount + Sync> ModelContract<A> {
         Self {
             address,
             account,
-            block_id: starknet::core::types::BlockId::Tag(starknet::core::types::BlockTag::Pending),
+            block_id: starknet::core::types::BlockId::Tag(
+                starknet::core::types::BlockTag::PreConfirmed,
+            ),
         }
     }
     pub fn set_contract_address(&mut self, address: starknet::core::types::Felt) {
@@ -43,7 +45,9 @@ impl<P: starknet::providers::Provider + Sync> ModelContractReader<P> {
         Self {
             address,
             provider,
-            block_id: starknet::core::types::BlockId::Tag(starknet::core::types::BlockTag::Pending),
+            block_id: starknet::core::types::BlockId::Tag(
+                starknet::core::types::BlockTag::PreConfirmed,
+            ),
         }
     }
     pub fn set_contract_address(&mut self, address: starknet::core::types::Felt) {
@@ -435,6 +439,7 @@ pub enum Layout {
     Array(Vec<Layout>),
     ByteArray,
     Enum(Vec<FieldLayout>),
+    FixedArray((Vec<Layout>, u32)),
 }
 impl cainome::cairo_serde::CairoSerde for Layout {
     type RustType = Self;
@@ -448,6 +453,7 @@ impl cainome::cairo_serde::CairoSerde for Layout {
             Layout::Array(val) => Vec::<Layout>::cairo_serialized_size(val) + 1,
             Layout::ByteArray => 1,
             Layout::Enum(val) => Vec::<FieldLayout>::cairo_serialized_size(val) + 1,
+            Layout::FixedArray(val) => <(Vec<Layout>, u32)>::cairo_serialized_size(val) + 1,
             _ => 0,
         }
     }
@@ -484,6 +490,12 @@ impl cainome::cairo_serde::CairoSerde for Layout {
                 temp.extend(Vec::<FieldLayout>::cairo_serialize(val));
                 temp
             }
+            Layout::FixedArray(val) => {
+                let mut temp = vec![];
+                temp.extend(usize::cairo_serialize(&6usize));
+                temp.extend(<(Vec<Layout>, u32)>::cairo_serialize(val));
+                temp
+            }
             _ => vec![],
         }
     }
@@ -515,6 +527,10 @@ impl cainome::cairo_serde::CairoSerde for Layout {
                 __felts,
                 __offset + 1,
             )?)),
+            6usize => Ok(Layout::FixedArray(<(Vec<Layout>, u32)>::cairo_deserialize(
+                __felts,
+                __offset + 1,
+            )?)),
             _ => {
                 return Err(cainome::cairo_serde::Error::Deserialize(format!(
                     "Index not handle for enum {}",
@@ -532,6 +548,7 @@ pub enum Ty {
     Tuple(Vec<Ty>),
     Array(Vec<Ty>),
     ByteArray,
+    FixedArray((Vec<Ty>, u32)),
 }
 impl cainome::cairo_serde::CairoSerde for Ty {
     type RustType = Self;
@@ -545,6 +562,7 @@ impl cainome::cairo_serde::CairoSerde for Ty {
             Ty::Tuple(val) => Vec::<Ty>::cairo_serialized_size(val) + 1,
             Ty::Array(val) => Vec::<Ty>::cairo_serialized_size(val) + 1,
             Ty::ByteArray => 1,
+            Ty::FixedArray(val) => <(Vec<Ty>, u32)>::cairo_serialized_size(val) + 1,
             _ => 0,
         }
     }
@@ -581,6 +599,12 @@ impl cainome::cairo_serde::CairoSerde for Ty {
                 temp
             }
             Ty::ByteArray => usize::cairo_serialize(&5usize),
+            Ty::FixedArray(val) => {
+                let mut temp = vec![];
+                temp.extend(usize::cairo_serialize(&6usize));
+                temp.extend(<(Vec<Ty>, u32)>::cairo_serialize(val));
+                temp
+            }
             _ => vec![],
         }
     }
@@ -608,6 +632,10 @@ impl cainome::cairo_serde::CairoSerde for Ty {
                 __offset + 1,
             )?)),
             5usize => Ok(Ty::ByteArray),
+            6usize => Ok(Ty::FixedArray(<(Vec<Ty>, u32)>::cairo_deserialize(
+                __felts,
+                __offset + 1,
+            )?)),
             _ => {
                 return Err(cainome::cairo_serde::Error::Deserialize(format!(
                     "Index not handle for enum {}",
@@ -736,6 +764,18 @@ impl<A: starknet::accounts::ConnectedAccount + Sync> ModelContract<A> {
         };
         cainome::cairo_serde::call::FCall::new(__call, self.provider())
     }
+    #[allow(clippy::ptr_arg)]
+    #[allow(clippy::too_many_arguments)]
+    pub fn use_legacy_storage(&self) -> cainome::cairo_serde::call::FCall<A::Provider, bool> {
+        use cainome::cairo_serde::CairoSerde;
+        let mut __calldata = vec![];
+        let __call = starknet::core::types::FunctionCall {
+            contract_address: self.address,
+            entry_point_selector: starknet::macros::selector!("use_legacy_storage"),
+            calldata: __calldata,
+        };
+        cainome::cairo_serde::call::FCall::new(__call, self.provider())
+    }
 }
 impl<P: starknet::providers::Provider + Sync> ModelContractReader<P> {
     #[allow(clippy::ptr_arg)]
@@ -849,6 +889,18 @@ impl<P: starknet::providers::Provider + Sync> ModelContractReader<P> {
         let __call = starknet::core::types::FunctionCall {
             contract_address: self.address,
             entry_point_selector: starknet::macros::selector!("unpacked_size"),
+            calldata: __calldata,
+        };
+        cainome::cairo_serde::call::FCall::new(__call, self.provider())
+    }
+    #[allow(clippy::ptr_arg)]
+    #[allow(clippy::too_many_arguments)]
+    pub fn use_legacy_storage(&self) -> cainome::cairo_serde::call::FCall<P, bool> {
+        use cainome::cairo_serde::CairoSerde;
+        let mut __calldata = vec![];
+        let __call = starknet::core::types::FunctionCall {
+            contract_address: self.address,
+            entry_point_selector: starknet::macros::selector!("use_legacy_storage"),
             calldata: __calldata,
         };
         cainome::cairo_serde::call::FCall::new(__call, self.provider())

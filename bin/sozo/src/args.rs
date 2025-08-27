@@ -1,7 +1,7 @@
 use anyhow::Result;
 use camino::Utf8PathBuf;
 use clap::Parser;
-use scarb::compiler::Profile;
+use scarb_interop::Profile;
 use scarb_ui::Verbosity;
 use smol_str::SmolStr;
 use tracing::level_filters::LevelFilter;
@@ -13,7 +13,6 @@ use crate::utils::generate_version;
 
 #[derive(Parser, Debug)]
 #[command(author, version=generate_version(), about, long_about = None)]
-#[command(propagate_version = true)]
 pub struct SozoArgs {
     #[arg(long)]
     #[arg(global = true)]
