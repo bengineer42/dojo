@@ -48,8 +48,8 @@ pub enum Ty {
     Enum(Enum),
     Tuple(Vec<Ty>),
     Array(Vec<Ty>),
-    FixedSizeArray((Vec<Ty>, u32)),
     ByteArray(String),
+    FixedSizeArray((Vec<Ty>, u32)),
 }
 
 impl Ty {
@@ -418,22 +418,7 @@ impl Ty {
                     option.name.clone(): option.ty.to_json_value()?
                 }))
             }
-            Ty::Array(items) => {
-                let values: Result<Vec<_>, _> = items.iter().map(|ty| ty.to_json_value()).collect();
-                Ok(json!(values?))
-            }
-            Ty::FixedSizeArray((items, size)) => {
-                let values: Result<Vec<_>, _> = items.iter().map(|ty| ty.to_json_value()).collect();
-
-                let value = json!(
-                    {
-                        "elements": values?,
-                        "size": size
-                    }
-                );
-                Ok(value)
-            }
-            Ty::Tuple(items) => {
+            Ty::Array(items) | Ty::Tuple(items) | Ty::FixedSizeArray((items, _)) => {
                 let values: Result<Vec<_>, _> = items.iter().map(|ty| ty.to_json_value()).collect();
                 Ok(json!(values?))
             }
@@ -463,47 +448,36 @@ impl Ty {
                 }
             }
             (Ty::Array(items), JsonValue::Array(values)) => {
-                let template = items[0].clone();
-                items.clear();
-                for value in values {
-                    let mut item = template.clone();
-                    item.from_json_value(value)?;
-                    items.push(item);
-                }
-            }
-            (Ty::FixedSizeArray((items, size)), JsonValue::Object(obj)) => {
-                if let (Some(JsonValue::Array(values)), Some(JsonValue::Number(expected_size))) =
-                    (obj.get("elements"), obj.get("size"))
-                {
-                    if let Some(expected_size) = expected_size.as_u64() {
-                        if expected_size != *size as u64 {
-                            return Err(PrimitiveError::TypeMismatch);
-                        }
-                        let template = items[0].clone();
-                        items.clear();
-                        for value in values {
-                            let mut item = template.clone();
-                            item.from_json_value(value.clone())?;
-                            items.push(item);
-                        }
-                    } else {
-                        return Err(PrimitiveError::TypeMismatch);
-                    }
-                } else {
+                if values.is_empty() {
+                    items.clear();
+                } else if items.is_empty() {
                     return Err(PrimitiveError::TypeMismatch);
+                } else {
+                    let template = items[0].clone();
+                    items.clear();
+                    for value in values {
+                        let mut item = template.clone();
+                        item.from_json_value(value)?;
+                        items.push(item);
+                    }
                 }
             }
-            // Fallback for backward compatibility with simple array format
             (Ty::FixedSizeArray((items, size)), JsonValue::Array(values)) => {
                 if values.len() != *size as usize {
                     return Err(PrimitiveError::TypeMismatch);
                 }
-                let template = items[0].clone();
-                items.clear();
-                for value in values {
-                    let mut item = template.clone();
-                    item.from_json_value(value)?;
-                    items.push(item);
+                if values.is_empty() {
+                    items.clear();
+                } else if items.is_empty() {
+                    return Err(PrimitiveError::TypeMismatch);
+                } else {
+                    let template = items[0].clone();
+                    items.clear();
+                    for value in values {
+                        let mut item = template.clone();
+                        item.from_json_value(value)?;
+                        items.push(item);
+                    }
                 }
             }
             (Ty::Tuple(items), JsonValue::Array(values)) => {
@@ -1048,38 +1022,248 @@ mod tests {
     }
 
     #[test]
-    fn ty_serde_fixed_size_array() {
-        // serialization ------------------------
-
-        let elems = vec![Ty::Primitive(Primitive::Felt252(Some(felt!("0x1")))); 3]; // [felt252; 3]
-        let ty = Ty::FixedSizeArray((elems.clone(), 3));
-
-        let expected_json = json!({
-            "size": 3,
-            "elements": elems.iter().map(|e| e.to_json_value().unwrap()).collect::<Vec<_>>(),
-        });
-
-        let actual_json = ty.to_json_value().expect("failed to serialize");
-        assert_eq!(actual_json, expected_json);
-
-        // deserialization ------------------------
-
-        let elems = vec![Ty::Primitive(Primitive::Felt252(None)); 3]; // [felt252; 3]
-        let mut ty = Ty::FixedSizeArray((elems, 3));
-
-        let mut felts = vec![felt!("0x1"), felt!("0x2"), felt!("0x3")];
-        ty.deserialize(&mut felts, false).expect("failed to deserialize");
-        assert!(felts.is_empty());
-
-        let expected_elems = vec![
-            Ty::Primitive(Primitive::Felt252(Some(felt!("0x1")))),
-            Ty::Primitive(Primitive::Felt252(Some(felt!("0x2")))),
-            Ty::Primitive(Primitive::Felt252(Some(felt!("0x3")))),
+    fn test_to_json_value_comprehensive_with_round_trip() {
+        let test_cases = vec![
+            // Test Array
+            Ty::Array(vec![
+                Ty::Primitive(Primitive::U32(Some(1))),
+                Ty::Primitive(Primitive::U32(Some(2))),
+                Ty::Primitive(Primitive::U32(Some(3))),
+            ]),
+            // Test Tuple
+            Ty::Tuple(vec![
+                Ty::Primitive(Primitive::U32(Some(42))),
+                Ty::Primitive(Primitive::Bool(Some(true))),
+                Ty::ByteArray("hello".to_string()),
+            ]),
+            // Test FixedSizeArray
+            Ty::FixedSizeArray((
+                vec![
+                    Ty::Primitive(Primitive::Felt252(Some(felt!("0x1")))),
+                    Ty::Primitive(Primitive::Felt252(Some(felt!("0x2")))),
+                    Ty::Primitive(Primitive::Felt252(Some(felt!("0x3")))),
+                ],
+                3,
+            )),
+            // Test nested structures
+            Ty::Tuple(vec![
+                Ty::Array(vec![
+                    Ty::Primitive(Primitive::U8(Some(10))),
+                    Ty::Primitive(Primitive::U8(Some(20))),
+                ]),
+                Ty::Tuple(vec![
+                    Ty::Primitive(Primitive::Bool(Some(false))),
+                    Ty::Primitive(Primitive::U16(Some(300))),
+                ]),
+            ]),
+            // Test nested Array
+            Ty::Array(vec![
+                Ty::Tuple(vec![
+                    Ty::Primitive(Primitive::U16(Some(100))),
+                    Ty::Primitive(Primitive::Bool(Some(false))),
+                ]),
+                Ty::Tuple(vec![
+                    Ty::Primitive(Primitive::U16(Some(200))),
+                    Ty::Primitive(Primitive::Bool(Some(true))),
+                ]),
+            ]),
+            // Test Struct
+            Ty::Struct(Struct {
+                name: "TestStruct".to_string(),
+                children: vec![
+                    Member {
+                        name: "field1".to_string(),
+                        ty: Ty::Primitive(Primitive::U32(Some(42))),
+                        key: false,
+                    },
+                    Member {
+                        name: "field2".to_string(),
+                        ty: Ty::Primitive(Primitive::Bool(Some(true))),
+                        key: false,
+                    },
+                    Member {
+                        name: "nested_array".to_string(),
+                        ty: Ty::Array(vec![
+                            Ty::Primitive(Primitive::U8(Some(1))),
+                            Ty::Primitive(Primitive::U8(Some(2))),
+                        ]),
+                        key: false,
+                    },
+                ],
+            }),
+            // Test Enum
+            Ty::Enum(Enum {
+                name: "TestEnum".to_string(),
+                option: Some(1),
+                options: vec![
+                    EnumOption { name: "VariantA".to_string(), ty: Ty::Tuple(vec![]) },
+                    EnumOption {
+                        name: "VariantB".to_string(),
+                        ty: Ty::Primitive(Primitive::U32(Some(123))),
+                    },
+                ],
+            }),
+            // Test another Enum
+            Ty::Enum(Enum {
+                name: "Status".to_string(),
+                option: Some(0),
+                options: vec![
+                    EnumOption {
+                        name: "Active".to_string(),
+                        ty: Ty::Primitive(Primitive::U32(Some(100))),
+                    },
+                    EnumOption { name: "Inactive".to_string(), ty: Ty::Tuple(vec![]) },
+                ],
+            }),
+            // Test ByteArray
+            Ty::ByteArray("Hello, World!".to_string()),
+            // Test empty collections
+            Ty::Array(vec![]),
+            Ty::Tuple(vec![]),
+            Ty::FixedSizeArray((vec![], 0)),
         ];
 
-        assert_matches!(&ty, Ty::FixedSizeArray((elements, size)) => {
-            assert_eq!(elements, &expected_elems);
-            assert_eq!(size, &3);
+        // Test specific expected JSON values for key types
+        let array_json = test_cases[0].to_json_value().expect("failed to serialize array");
+        let expected_array = json!([1, 2, 3]);
+        assert_eq!(array_json, expected_array);
+
+        let tuple_json = test_cases[1].to_json_value().expect("failed to serialize tuple");
+        let expected_tuple = json!([42, true, "hello"]);
+        assert_eq!(tuple_json, expected_tuple);
+
+        let fixed_array_json =
+            test_cases[2].to_json_value().expect("failed to serialize fixed array");
+        // Current implementation treats FixedSizeArray same as Array
+        let expected_fixed_array = json!([
+            "0x0000000000000000000000000000000000000000000000000000000000000001",
+            "0x0000000000000000000000000000000000000000000000000000000000000002",
+            "0x0000000000000000000000000000000000000000000000000000000000000003"
+        ]);
+        assert_eq!(fixed_array_json, expected_fixed_array);
+
+        let nested_json =
+            test_cases[3].to_json_value().expect("failed to serialize nested structure");
+        let expected_nested = json!([[10, 20], [false, 300]]);
+        assert_eq!(nested_json, expected_nested);
+
+        let struct_json = test_cases[5].to_json_value().expect("failed to serialize struct");
+        let expected_struct = json!({
+            "field1": 42,
+            "field2": true,
+            "nested_array": [1, 2]
         });
+        assert_eq!(struct_json, expected_struct);
+
+        let enum_json = test_cases[6].to_json_value().expect("failed to serialize enum");
+        let expected_enum = json!({
+            "VariantB": 123
+        });
+        assert_eq!(enum_json, expected_enum);
+
+        let byte_array_json =
+            test_cases[8].to_json_value().expect("failed to serialize byte array");
+        assert_eq!(byte_array_json, json!("Hello, World!"));
+
+        // Test empty collections
+        let empty_array_json =
+            test_cases[9].to_json_value().expect("failed to serialize empty array");
+        assert_eq!(empty_array_json, json!([]));
+
+        let empty_tuple_json =
+            test_cases[10].to_json_value().expect("failed to serialize empty tuple");
+        assert_eq!(empty_tuple_json, json!([]));
+
+        let empty_fixed_array_json =
+            test_cases[11].to_json_value().expect("failed to serialize empty fixed array");
+        assert_eq!(empty_fixed_array_json, json!([]));
+
+        // Round trip test for all cases
+        for original in test_cases {
+            // Convert to JSON value
+            let json_value = original.to_json_value().expect("failed to serialize to JSON");
+
+            // Create a new Ty of the same type structure but with None/empty values
+            let mut parsed = create_empty_ty_like(&original);
+
+            // Parse back from JSON value
+            parsed.from_json_value(json_value.clone()).unwrap_or_else(|_| {
+                panic!(
+                    "failed to deserialize from JSON for type: {:?}, json: {}",
+                    original.name(),
+                    json_value
+                )
+            });
+
+            // Should match original
+            assert_eq!(parsed, original, "JSON round trip failed for type: {:?}", original.name());
+        }
+    }
+
+    // Helper function to create empty Ty structures matching the shape of the original
+    fn create_empty_ty_like(ty: &Ty) -> Ty {
+        match ty {
+            Ty::Primitive(p) => match p {
+                Primitive::I8(_) => Ty::Primitive(Primitive::I8(None)),
+                Primitive::I16(_) => Ty::Primitive(Primitive::I16(None)),
+                Primitive::I32(_) => Ty::Primitive(Primitive::I32(None)),
+                Primitive::I64(_) => Ty::Primitive(Primitive::I64(None)),
+                Primitive::I128(_) => Ty::Primitive(Primitive::I128(None)),
+                Primitive::U8(_) => Ty::Primitive(Primitive::U8(None)),
+                Primitive::U16(_) => Ty::Primitive(Primitive::U16(None)),
+                Primitive::U32(_) => Ty::Primitive(Primitive::U32(None)),
+                Primitive::U64(_) => Ty::Primitive(Primitive::U64(None)),
+                Primitive::U128(_) => Ty::Primitive(Primitive::U128(None)),
+                Primitive::U256(_) => Ty::Primitive(Primitive::U256(None)),
+                Primitive::Bool(_) => Ty::Primitive(Primitive::Bool(None)),
+                Primitive::Felt252(_) => Ty::Primitive(Primitive::Felt252(None)),
+                Primitive::ClassHash(_) => Ty::Primitive(Primitive::ClassHash(None)),
+                Primitive::ContractAddress(_) => Ty::Primitive(Primitive::ContractAddress(None)),
+                Primitive::EthAddress(_) => Ty::Primitive(Primitive::EthAddress(None)),
+            },
+            Ty::Struct(s) => Ty::Struct(Struct {
+                name: s.name.clone(),
+                children: s
+                    .children
+                    .iter()
+                    .map(|m| Member {
+                        name: m.name.clone(),
+                        ty: create_empty_ty_like(&m.ty),
+                        key: m.key,
+                    })
+                    .collect(),
+            }),
+            Ty::Enum(e) => Ty::Enum(Enum {
+                name: e.name.clone(),
+                option: None,
+                options: e
+                    .options
+                    .iter()
+                    .map(|opt| EnumOption {
+                        name: opt.name.clone(),
+                        ty: create_empty_ty_like(&opt.ty),
+                    })
+                    .collect(),
+            }),
+            Ty::Tuple(items) => Ty::Tuple(items.iter().map(create_empty_ty_like).collect()),
+            Ty::Array(items) => {
+                if items.is_empty() {
+                    Ty::Array(vec![])
+                } else {
+                    // For arrays, we need at least one element as template
+                    Ty::Array(vec![create_empty_ty_like(&items[0])])
+                }
+            }
+            Ty::FixedSizeArray((items, size)) => {
+                if items.is_empty() {
+                    Ty::FixedSizeArray((vec![], *size))
+                } else {
+                    // For fixed size arrays, we need the correct number of elements
+                    let empty_item = create_empty_ty_like(&items[0]);
+                    Ty::FixedSizeArray((vec![empty_item; *size as usize], *size))
+                }
+            }
+            Ty::ByteArray(_) => Ty::ByteArray(String::new()),
+        }
     }
 }
