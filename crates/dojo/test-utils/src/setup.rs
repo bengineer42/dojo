@@ -22,8 +22,11 @@ impl TestSetup {
         let example_path = Utf8PathBuf::from(example_path).canonicalize_utf8().unwrap();
         let dojo_core = Utf8PathBuf::from(dojo_core).canonicalize_utf8().unwrap();
 
-        let packages: Vec<Utf8PathBuf> =
-            vec![example_path.join("spawn-and-move"), example_path.join("game-lib")];
+        let packages: Vec<Utf8PathBuf> = vec![
+            example_path.join("spawn-and-move"),
+            example_path.join("game-lib"),
+            example_path.join("simple"),
+        ];
 
         Self::from_paths(&dojo_core, &packages)
     }
@@ -138,7 +141,12 @@ impl TestSetup {
         let root_path = dojo_core_path.parent().unwrap();
 
         update_dependency(manifest_path, &mut table, "dojo", dojo_core_path);
-        update_dependency(manifest_path, &mut table, "dojo_macros", &root_path.join("macros"));
+        update_dependency(
+            manifest_path,
+            &mut table,
+            "dojo_cairo_macros",
+            &root_path.join("macros"),
+        );
         update_dev_dependency(&mut table, "dojo_snf_test", &root_path.join("dojo-snf-test"));
         update_dev_dependency(&mut table, "dojo_cairo_test", &root_path.join("dojo-cairo-test"));
 

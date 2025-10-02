@@ -10,11 +10,11 @@ use dojo_world::config::ProfileConfig;
 pub mod error;
 use dojo_world::local::{ResourceLocal, WorldLocal};
 use error::BindgenResult;
+use tracing::debug;
 
 mod plugins;
 use plugins::recs::TypescriptRecsPlugin;
 use plugins::typescript::TypescriptPlugin;
-use plugins::typescript_v2::TypeScriptV2Plugin;
 use plugins::unity::UnityPlugin;
 use plugins::unrealengine::UnrealEnginePlugin;
 use plugins::BuiltinPlugin;
@@ -67,6 +67,8 @@ pub struct DojoData {
     pub models: HashMap<String, DojoModel>,
     /// All the events contracts found in the project.
     pub events: HashMap<String, DojoEvent>,
+    /// All other types found as function inputs or outputs that are not builtin, models or events.
+    pub other_types: HashMap<String, Token>,
 }
 
 #[derive(Debug)]
@@ -105,7 +107,6 @@ impl PluginManager {
                 BuiltinPlugins::Typescript => Box::new(TypescriptPlugin::new()),
                 BuiltinPlugins::Unity => Box::new(UnityPlugin::new()),
                 BuiltinPlugins::UnrealEngine => Box::new(UnrealEnginePlugin::new()),
-                BuiltinPlugins::TypeScriptV2 => Box::new(TypeScriptV2Plugin::new()),
                 BuiltinPlugins::Recs => Box::new(TypescriptRecsPlugin::new()),
             };
 
@@ -151,6 +152,9 @@ fn gather_dojo_data(
     let mut models = HashMap::new();
     let mut contracts = HashMap::new();
     let mut events = HashMap::new();
+    // Other types are structs or enums used as input or output of systems
+    // that are not models or events.
+    let mut other_types = HashMap::new();
 
     for r in world_local.resources.values() {
         if let Some(skip_migrations) = &skip_migration {
@@ -161,7 +165,48 @@ fn gather_dojo_data(
 
         match r {
             ResourceLocal::Contract(c) => {
+                let contract_name = c.common.name.clone();
+                // output the ABI of the class in a json file
+                fs::write(
+                    format!("/tmp/{}.json", contract_name),
+                    serde_json::to_string_pretty(&c.common.class.abi).unwrap(),
+                )?;
+
                 let tokens = AbiParser::collect_tokens(&c.common.class.abi, &HashMap::new())?;
+
+                // Ensures that all types that are inputs or output of functions are added to the
+                // other types.
+                for s in &tokens.structs {
+                    if let Token::Composite(c) = s {
+                        let name = c.type_path_no_generic();
+
+                        // Skip builtin IWorldDispatcher struct.
+                        if name.ends_with("::IWorldDispatcher")
+                            || name.ends_with("upgradeable::upgradeable_cpt::Upgraded")
+                        {
+                            continue;
+                        }
+
+                        if !other_types.contains_key(&name) && !c.is_builtin() {
+                            other_types.insert(name.clone(), s.clone());
+                        }
+                    }
+                }
+
+                for e in &tokens.enums {
+                    if let Token::Composite(c) = e {
+                        let name = c.type_path_no_generic();
+
+                        // Skip builtin Event enum.
+                        if name.ends_with("::Event") {
+                            continue;
+                        }
+
+                        if !other_types.contains_key(&name) && !c.is_builtin() {
+                            other_types.insert(name.clone(), e.clone());
+                        }
+                    }
+                }
 
                 // Identify the systems -> for now only take the functions from the
                 // interfaces.
@@ -169,9 +214,26 @@ fn gather_dojo_data(
                 let interface_blacklist =
                     ["dojo::world::IWorldProvider", "dojo::contract::upgradeable::IUpgradeable"];
 
+                // Blacklist all the functions that are added by Dojo macros.
+                let function_blacklist = ["dojo_init", "upgrade", "world_dispatcher", "dojo_name"];
+
+                // Most of functions are added to the interfaces, but not all.
                 for (interface, funcs) in &tokens.interfaces {
                     if !interface_blacklist.contains(&interface.as_str()) {
-                        systems.extend(funcs.clone());
+                        for func in funcs {
+                            if !function_blacklist
+                                .contains(&func.to_function().unwrap().name.as_str())
+                            {
+                                systems.push(func.clone());
+                            }
+                        }
+                    }
+                }
+
+                // Ensure even free functions are added to the systems.
+                for func in &tokens.functions {
+                    if !function_blacklist.contains(&func.to_function().unwrap().name.as_str()) {
+                        systems.push(func.clone());
                     }
                 }
 
@@ -193,9 +255,45 @@ fn gather_dojo_data(
         }
     }
 
+    // Filter out the types that are already models or events.
+    for model in models.values() {
+        for token in &model.tokens.structs {
+            let name = token.to_composite().unwrap().type_path_no_generic();
+            if other_types.contains_key(&name) {
+                other_types.remove(&name);
+            }
+        }
+
+        for token in &model.tokens.enums {
+            let name = token.to_composite().unwrap().type_path_no_generic();
+            if other_types.contains_key(&name) {
+                other_types.remove(&name);
+            }
+        }
+    }
+
+    for event in events.values() {
+        for token in &event.tokens.structs {
+            let name = token.to_composite().unwrap().type_path_no_generic();
+            if other_types.contains_key(&name) {
+                other_types.remove(&name);
+            }
+        }
+
+        for token in &event.tokens.enums {
+            let name = token.to_composite().unwrap().type_path_no_generic();
+            if other_types.contains_key(&name) {
+                other_types.remove(&name);
+            }
+        }
+    }
+
+    debug!(contracts = ?contracts.keys(), models = ?models.keys(), events = ?events.keys(), other_types = ?other_types.keys(), "Gathering Dojo data.");
+
     let world = DojoWorld { name: root_package_name.to_string() };
 
-    Ok(DojoData { world, models, contracts, events })
+    let data = DojoData { world, models, contracts, events, other_types };
+    Ok(data)
 }
 
 /// Filters the model ABI to keep relevant types
@@ -251,7 +349,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn gather_data_ok() {
+    fn gather_data_ok_spawn_and_move() {
         let setup = TestSetup::from_examples("../core", "../../../examples/");
         let metadata = setup.load_metadata("spawn-and-move", Profile::DEV);
 
@@ -267,12 +365,11 @@ mod tests {
             None
         };
 
-        dbg!(&setup.manifest_path("spawn-and-move"));
         let data =
             gather_dojo_data(setup.manifest_path("spawn-and-move"), "ns", "dev", skip_migrations)
                 .expect("Failed to gather dojo data");
 
-        assert_eq!(data.models.len(), 8);
+        assert_eq!(data.models.len(), 10);
 
         assert_eq!(data.world.name, "ns");
 
@@ -287,5 +384,76 @@ mod tests {
 
         let player_config = data.models.get("ns-PlayerConfig").unwrap();
         assert_eq!(player_config.tag, "ns-PlayerConfig");
+    }
+
+    #[test]
+    fn gather_data_ok_simple() {
+        let setup = TestSetup::from_examples("../core", "../../../examples/");
+
+        let metadata = setup.load_metadata("simple", Profile::DEV);
+
+        let profile_config = metadata.load_dojo_profile_config().unwrap();
+
+        let skip_migrations = if let Some(migration) = profile_config.migration {
+            let mut skip_migration = vec![];
+            if let Some(skip_contracts) = migration.skip_contracts {
+                skip_migration.extend(skip_contracts);
+            }
+            Some(skip_migration)
+        } else {
+            None
+        };
+
+        let data = gather_dojo_data(setup.manifest_path("simple"), "ns", "dev", skip_migrations)
+            .expect("Failed to gather dojo data");
+
+        let mut models_keys: Vec<&str> = data.models.keys().map(|k| k.as_str()).collect();
+        let mut events_keys: Vec<&str> = data.events.keys().map(|k| k.as_str()).collect();
+        let mut other_types_keys: Vec<&str> = data.other_types.keys().map(|k| k.as_str()).collect();
+        let mut contracts_keys: Vec<&str> = data.contracts.keys().map(|k| k.as_str()).collect();
+        let mut systems_keys: Vec<&str> = data
+            .contracts
+            .values()
+            .flat_map(|c| c.systems.iter().map(|s| s.to_function().unwrap().name.as_str()))
+            .collect();
+
+        // Sort all keys by alphabetical order
+        models_keys.sort();
+        events_keys.sort();
+        other_types_keys.sort();
+        contracts_keys.sort();
+        systems_keys.sort();
+
+        assert_eq!(models_keys, ["ns-M", "ns-ModelTest", "ns2-M"]);
+        assert_eq!(events_keys, ["ns-E", "ns-EH"]);
+        assert_eq!(
+            other_types_keys,
+            [
+                "dojo_simple::OtherType",
+                "dojo_simple::PlayerSetting",
+                "dojo_simple::PlayerSettingValue",
+                "dojo_simple::SocialPlatform"
+            ]
+        );
+        assert_eq!(contracts_keys, ["ns-c1", "ns-c2", "ns2-c1"]);
+
+        // Systems are duplicated since c1 contract is registered in two namespaces.
+        assert_eq!(
+            systems_keys,
+            [
+                "system_1",
+                "system_1",
+                "system_2",
+                "system_2",
+                "system_3",
+                "system_3",
+                "system_4",
+                "system_4",
+                "system_5",
+                "system_5",
+                "system_free",
+                "system_free"
+            ]
+        );
     }
 }

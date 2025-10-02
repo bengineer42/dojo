@@ -1,7 +1,7 @@
 use cainome::parser::tokens::{Composite, CompositeType, Token};
 
-use super::constants::{BIGNUMNERISH_IMPORT, CAIRO_OPTION_IMPORT, SN_IMPORT_SEARCH};
-use super::{token_is_option, JsPrimitiveType};
+use super::constants::{BIGNUMBERISH_IMPORT, CAIRO_OPTION_IMPORT, SN_IMPORT_SEARCH};
+use super::{token_has_inner_option, token_is_option, JsPrimitiveType};
 use crate::error::BindgenResult;
 use crate::plugins::typescript::generator::constants::CAIRO_OPTION_TOKEN;
 use crate::plugins::{BindgenModelGenerator, Buffer};
@@ -11,11 +11,11 @@ impl TsInterfaceGenerator {
     fn check_import(&self, token: &Composite, buffer: &mut Buffer) {
         // only search for end part of the import, as we append the other imports afterward
         if !buffer.has("BigNumberish } from 'starknet';") {
-            buffer.push(BIGNUMNERISH_IMPORT.to_owned());
+            buffer.push(BIGNUMBERISH_IMPORT.to_owned());
         }
 
         // type is Option, need to import CairoOption
-        if token_is_option(token) {
+        if token_is_option(token) || token_has_inner_option(token) {
             // we directly add import if 'starknet' import is not present
             if !buffer.has(SN_IMPORT_SEARCH) {
                 buffer.push(CAIRO_OPTION_IMPORT.to_owned());

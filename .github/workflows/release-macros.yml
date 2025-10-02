@@ -1,0 +1,135 @@
+# Dojo Cairo Macros release workflow.
+#
+name: release-macros
+
+on:
+  workflow_dispatch:
+  pull_request:
+    types: [closed]
+    branches:
+      - main
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_VERSION: 1.88.0
+  REGISTRY_IMAGE: ghcr.io/${{ github.repository }}
+
+jobs:
+  prepare:
+    if: (github.event.pull_request.merged == true && github.event.pull_request.head.ref == 'prepare-release-macros') || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    outputs:
+      tag_name: ${{ steps.release_info.outputs.tag_name }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Get version
+        id: release_info
+        run: |
+          cargo install cargo-get
+          echo "tag_name=v$(cargo get workspace.package.version)" >> $GITHUB_OUTPUT
+
+  build-artifacts:
+    name: ${{ matrix.job.target }} (${{ matrix.job.os }})
+    needs: prepare
+    runs-on: ${{ matrix.job.os }}
+    env:
+      PLATFORM_NAME: ${{ matrix.job.platform }}
+      TARGET: ${{ matrix.job.target }}
+      ARCH: ${{ matrix.job.arch }}
+    strategy:
+      matrix:
+        job:
+          - os: ubuntu-latest-8-cores
+            platform: linux
+            target: x86_64-unknown-linux-gnu
+            arch: amd64
+          - os: ubuntu-latest-8-cores-arm64
+            platform: linux
+            target: aarch64-unknown-linux-gnu
+            arch: arm64
+            svm_target_platform: linux-aarch64
+          - os: macos-latest-xlarge
+            platform: darwin
+            target: x86_64-apple-darwin
+            arch: amd64
+          - os: macos-latest
+            platform: darwin
+            target: aarch64-apple-darwin
+            arch: arm64
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@master
+        name: Rust Toolchain Setup
+        with:
+          targets: ${{ matrix.job.target }}
+          toolchain: ${{ env.RUST_VERSION }}
+
+      - uses: Swatinem/rust-cache@v1
+        with:
+          cache-on-failure: true
+
+      - name: Build and archive binaries for the Dojo Cairo Macros
+        id: artifacts
+        run: |
+          cd ./crates/dojo/macros
+          cargo build --release --locked --target "${TARGET}"
+
+          ls -la ./target/"${TARGET}"/release
+
+          VERSION_NAME=$(cargo metadata --format-version=1 --no-deps | jq -r '.packages[0].version')
+          echo "version_name=${VERSION_NAME}"
+
+          # Determine library extension based on platform
+          if [ "$PLATFORM_NAME" == "linux" ]; then
+            DLL_EXT="so"
+            LIBRARY_NAME="dojo_cairo_macros_v${VERSION_NAME}_${TARGET}.${DLL_EXT}"
+            mv "./target/${TARGET}/release/libdojo_cairo_macros.${DLL_EXT}" "../../../${LIBRARY_NAME}"
+            echo "file_name=${LIBRARY_NAME}" >> $GITHUB_OUTPUT
+          elif [ "$PLATFORM_NAME" == "darwin" ]; then
+            DLL_EXT="dylib"
+            LIBRARY_NAME="dojo_cairo_macros_v${VERSION_NAME}_${TARGET}.${DLL_EXT}"
+            mv "./target/${TARGET}/release/libdojo_cairo_macros.${DLL_EXT}" "../../../${LIBRARY_NAME}"
+            echo "file_name=${LIBRARY_NAME}" >> $GITHUB_OUTPUT
+          else
+            # Error with unsupported platform, to prevent one from adding
+            # a platform to the matrix without adding the corresponding logic.
+            echo "Error: Unsupported platform: $PLATFORM_NAME"
+            exit 1
+          fi
+        shell: bash
+
+      - name: Upload release artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: artifacts-${{ matrix.job.target }}
+          path: ${{ steps.artifacts.outputs.file_name }}
+          retention-days: 1
+
+  publish-scarb-plugin:
+    runs-on: ubuntu-latest
+    needs: [build-artifacts]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: software-mansion/setup-scarb@v1
+        with:
+          scarb-version: "2.12.2"
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: artifacts-*
+          path: artifacts
+          merge-multiple: true
+      - name: Extract libraries and publish to Scarb registry
+        run: |
+          # Create the target directory required by Scarb publish command
+          # to include pre-built binaries.
+          # https://docs.swmansion.com/scarb/docs/reference/procedural-macro.html#prebuilt-procedural-macros
+          mkdir -p ./crates/dojo/macros/target/scarb/cairo-plugin
+
+          for file in artifacts/*; do
+            cp "$file" ./crates/dojo/macros/target/scarb/cairo-plugin/
+          done
+
+          cd ./crates/dojo/macros
+          SCARB_REGISTRY_AUTH_TOKEN=${{ secrets.SCARB_REGISTRY_AUTH_TOKEN }} scarb publish --allow-dirty

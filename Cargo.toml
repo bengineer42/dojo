@@ -6,7 +6,6 @@ members = [
 	"bin/sozo",
 	"crates/dojo/bindgen",
 	"crates/dojo/core",
-	"crates/dojo/macros",
 	"crates/dojo/test-utils",
 	"crates/dojo/types",
 	"crates/dojo/utils",
@@ -19,10 +18,19 @@ members = [
 	"crates/sozo/scarb_interop",
 	"crates/sozo/scarb_metadata_ext",
 	"crates/sozo/signers",
+	"crates/sozo/ui",
 	"crates/sozo/walnut",
 	"examples/spawn-and-move",
 	"scripts/verify_db_balances",
 	"xtask/generate-test-db",
+]
+
+# Since the Dojo macros is published at a different pace of the rest of the
+# of the Workspace, it is excluded from the workspace and must be released
+# on its own before bumping Dojo.
+# The proc macros is expected to change less often than the rest of the Workspace.
+exclude = [
+	"crates/dojo/macros",
 ]
 
 [workspace.package]
@@ -30,7 +38,9 @@ edition = "2021"
 license = "Apache-2.0"
 license-file = "LICENSE"
 repository = "https://github.com/dojoengine/dojo/"
-version = "1.7.0-alpha.2"
+documentation = "https://book.dojoengine.org"
+homepage = "https://dojoengine.org"
+version = "1.7.1"
 
 [profile.performance]
 codegen-units = 1
@@ -54,25 +64,8 @@ dojo-metrics = { path = "crates/metrics" }
 dojo-bindgen = { path = "crates/dojo/bindgen" }
 dojo-core = { path = "crates/dojo/core" }
 dojo-test-utils = { path = "crates/dojo/test-utils" }
-dojo-types = { path = "crates/dojo/types" }
+dojo-types = { path = "crates/dojo/types", version = "1.7.1" }
 dojo-world = { path = "crates/dojo/world" }
-
-# dojo-world
-topological-sort = "0.2"
-
-# torii
-torii-cli = { path = "crates/torii/cli" }
-torii-client = { path = "crates/torii/client" }
-torii-graphql = { path = "crates/torii/graphql" }
-torii-grpc = { path = "crates/torii/grpc" }
-torii-indexer = { path = "crates/torii/indexer" }
-torii-mcp = { path = "crates/torii/mcp" }
-torii-relay = { path = "crates/torii/libp2p" }
-torii-runner = { path = "crates/torii/runner" }
-torii-server = { path = "crates/torii/server" }
-torii-sqlite = { path = "crates/torii/sqlite/sqlite" }
-torii-sqlite-types = { path = "crates/torii/sqlite/types" }
-torii-typed-data = { path = "crates/torii/typed-data" }
 
 # sozo
 scarb-interop = { path = "crates/sozo/scarb_interop" }
@@ -80,6 +73,7 @@ scarb-metadata-ext = { path = "crates/sozo/scarb_metadata_ext" }
 sozo-mcp = { path = "crates/sozo/mcp" }
 sozo-ops = { path = "crates/sozo/ops" }
 sozo-signers = { path = "crates/sozo/signers" }
+sozo-ui = { path = "crates/sozo/ui" }
 sozo-walnut = { path = "crates/sozo/walnut" }
 
 # macros
@@ -97,37 +91,10 @@ auto_impl = "1.2.0"
 base64 = "0.21.2"
 bigdecimal = "0.4.1"
 bytes = "1.6"
-
-# refer to Scarb git while `cairo-lang-macro` 0.2.0 (new api) is deployed on crates.io
-# cairo-lang-macro = { version = "0.2.0", git = "https://github.com/software-mansion/scarb.git" }
-cairo-lang-macro = "0.2.0"
-
-cairo-lang-compiler = { git = "https://github.com/starkware-libs/cairo", rev = "b385f34" }
-cairo-lang-debug = { git = "https://github.com/starkware-libs/cairo", rev = "b385f34" }
-cairo-lang-defs = { git = "https://github.com/starkware-libs/cairo", rev = "b385f34" }
-cairo-lang-diagnostics = { git = "https://github.com/starkware-libs/cairo", rev = "b385f34" }
-cairo-lang-filesystem = { git = "https://github.com/starkware-libs/cairo", rev = "b385f34" }
-cairo-lang-formatter = { git = "https://github.com/starkware-libs/cairo", rev = "b385f34" }
-cairo-lang-lowering = { git = "https://github.com/starkware-libs/cairo", rev = "b385f34" }
-cairo-lang-parser = { git = "https://github.com/starkware-libs/cairo", rev = "b385f34" }
-cairo-lang-plugins = { git = "https://github.com/starkware-libs/cairo", rev = "b385f34", features = [ "testing" ] }
-cairo-lang-primitive-token = "1"
-cairo-lang-project = { git = "https://github.com/starkware-libs/cairo", rev = "b385f34" }
-cairo-lang-runner = { git = "https://github.com/starkware-libs/cairo", rev = "b385f34" }
-cairo-lang-semantic = { git = "https://github.com/starkware-libs/cairo", rev = "b385f34" }
-cairo-lang-sierra = { git = "https://github.com/starkware-libs/cairo", rev = "b385f34" }
-cairo-lang-sierra-generator = { git = "https://github.com/starkware-libs/cairo", rev = "b385f34" }
-cairo-lang-sierra-to-casm = { git = "https://github.com/starkware-libs/cairo", rev = "b385f34" }
-cairo-lang-starknet = { git = "https://github.com/starkware-libs/cairo", rev = "b385f34" }
-cairo-lang-starknet-classes = { git = "https://github.com/starkware-libs/cairo", rev = "b385f34" }
-cairo-lang-syntax = { git = "https://github.com/starkware-libs/cairo", rev = "b385f34" }
-cairo-lang-test-plugin = { git = "https://github.com/starkware-libs/cairo", rev = "b385f34" }
-cairo-lang-test-runner = { git = "https://github.com/starkware-libs/cairo", rev = "b385f34" }
-cairo-lang-test-utils = { git = "https://github.com/starkware-libs/cairo", rev = "b385f34" }
-cairo-lang-utils = { git = "https://github.com/starkware-libs/cairo", rev = "b385f34" }
+cairo-lang-starknet-classes = "2.12.2"
 camino = { version = "1.1.2", features = [ "serde1" ] }
 chrono = { version = "0.4.24", features = [ "serde" ] }
-clap = { version = "4.5.16", features = [ "derive", "env" ] }
+clap = { version = "4.5.16", features = [ "derive", "env", "string" ] }
 clap-verbosity-flag = "2.0.1"
 clap_complete = "4.3"
 colored = "2.0.0"
@@ -168,13 +135,7 @@ rpassword = "7.2.0"
 rstest = "0.18.2"
 rstest_reuse = "0.6.0"
 salsa = "0.16.1"
-
-# version 2.11.4+nightly-2025-05-08
-# scarb-metadata = { git = "https://github.com/software-mansion/scarb", rev = "4fdeb7810" }
-# scarb-ui = { git = "https://github.com/software-mansion/scarb", rev = "4fdeb7810" }
 scarb-metadata = "1.15.1"
-scarb-ui = "0.1.7"
-
 semver = "1.0.5"
 serde = { version = "1.0", features = [ "derive" ] }
 serde_json = { version = "1.0.142", features = [ "arbitrary_precision" ] }
@@ -208,49 +169,12 @@ mime_guess = "2.0"
 hyper = "1.5"
 warp = "0.3"
 
-# gRPC
-prost = "0.12"
-tonic = { version = "0.11", features = [ "gzip", "tls", "tls-roots", "tls-webpki-roots" ] }
-tonic-build = "0.11"
-tonic-reflection = "0.11"
-tonic-web = "0.11"
-
-# WASM-compatible gRPC deps
-tonic-web-wasm-client = "0.6.0"
-wasm-prost = { version = "0.13", package = "prost" }
-wasm-tonic = { version = "0.12", default-features = false, features = [ "codegen", "gzip", "prost" ], package = "tonic" }
-wasm-tonic-build = { version = "0.12", default-features = false, features = [ "prost" ], package = "tonic-build" }
-
-criterion = "0.5.1"
-pprof = { version = "0.13.0", features = [ "criterion", "flamegraph" ] }
-
 # Slot integration. Dojo don't need to manually include `account_sdk` as dependency as `slot` already re-exports it.
 slot-core = { git = "https://github.com/cartridge-gg/slot", branch = "compartmentalization" }
 slot-session = { git = "https://github.com/cartridge-gg/slot", branch = "compartmentalization" }
-
-# alloy core
-alloy-primitives = { version = "0.8", default-features = false }
-alloy-sol-types = { version = "0.8", default-features = false }
-
-# alloy
-alloy-contract = { version = "0.4", default-features = false }
-alloy-json-rpc = { version = "0.4", default-features = false }
-alloy-network = { version = "0.4", default-features = false }
-alloy-provider = { version = "0.4", default-features = false }
-alloy-rpc-types-eth = { version = "0.4", default-features = false }
-alloy-signer = { version = "0.4", default-features = false }
-alloy-transport = { version = "0.4", default-features = false }
-
-# starknet = "0.15.1"
-#starknet-crypto = { version = "0.7.3" }
 
 starknet = "0.17"
 starknet-crypto = "0.8"
 starknet-types-core = { version = "0.2", features = [ "arbitrary", "hash" ] }
 
 bitvec = "1.0.1"
-
-# macro
-proc-macro2 = "1.0"
-quote = "1.0"
-syn = { version = "2.0", default-features = false }
