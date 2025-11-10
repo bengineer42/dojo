@@ -202,6 +202,10 @@ async fn match_event<P: Provider + Send + Sync>(
                 e.address.0
             ),
         ),
+        WorldEvent::ModelWithSchemaRegistered(e) => (
+            "Model with schema registered".to_string(),
+            format!("Namespace: {}\nName: {}", e.namespace.to_string()?, e.name.to_string()?),
+        ),
         WorldEvent::EventRegistered(e) => (
             "Event registered".to_string(),
             format!(
@@ -359,6 +363,28 @@ async fn match_event<P: Provider + Send + Sync>(
                     e.selector,
                     e.entity_id,
                     e.member_selector,
+                    e.values
+                        .iter()
+                        .map(|v| format!("{:#066x}", v))
+                        .collect::<Vec<String>>()
+                        .join(", "),
+                ),
+            )
+        }
+        WorldEvent::StoreUpdateMembers(e) => {
+            let tag = get_tag(e.selector, &tags);
+            // TODO: pretty print of the value.
+            (
+                format!("Store update member ({})", tag),
+                format!(
+                    "Selector: {:#066x}\nEntity ID: {:#066x}\nMember selector: {}\nValues: {}",
+                    e.selector,
+                    e.entity_id,
+                    e.member_selectors
+                        .iter()
+                        .map(|k| format!("{:#066x}", k))
+                        .collect::<Vec<String>>()
+                        .join(", "),
                     e.values
                         .iter()
                         .map(|v| format!("{:#066x}", v))
