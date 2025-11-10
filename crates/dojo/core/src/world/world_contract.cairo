@@ -29,6 +29,7 @@ pub mod world {
     use dojo::contract::components::upgradeable::{
         IUpgradeableDispatcher, IUpgradeableDispatcherTrait,
     };
+    use dojo::meta::introspect::Struct;
     use dojo::meta::{
         IDeployedResourceDispatcher, IDeployedResourceDispatcherTrait,
         IDeployedResourceLibraryDispatcher, IStoredResourceDispatcher,
@@ -63,6 +64,7 @@ pub mod world {
         WorldUpgraded: WorldUpgraded,
         NamespaceRegistered: NamespaceRegistered,
         ModelRegistered: ModelRegistered,
+        ModelWithSchemaRegistered: ModelWithSchemaRegistered,
         EventRegistered: EventRegistered,
         ContractRegistered: ContractRegistered,
         ExternalContractRegistered: ExternalContractRegistered,
@@ -77,6 +79,7 @@ pub mod world {
         StoreSetRecord: StoreSetRecord,
         StoreUpdateRecord: StoreUpdateRecord,
         StoreUpdateMember: StoreUpdateMember,
+        StoreUpdateMembers: StoreUpdateMembers,
         StoreDelRecord: StoreDelRecord,
         WriterUpdated: WriterUpdated,
         OwnerUpdated: OwnerUpdated,
@@ -174,6 +177,15 @@ pub mod world {
     }
 
     #[derive(Drop, starknet::Event)]
+    pub struct ModelWithSchemaRegistered {
+        #[key]
+        pub name: ByteArray,
+        #[key]
+        pub namespace: ByteArray,
+        pub schema: Struct,
+    }
+
+    #[derive(Drop, starknet::Event)]
     pub struct ModelUpgraded {
         #[key]
         pub selector: felt252,
@@ -228,6 +240,16 @@ pub mod world {
         pub entity_id: felt252,
         #[key]
         pub member_selector: felt252,
+        pub values: Span<felt252>,
+    }
+
+    #[derive(Drop, starknet::Event)]
+    pub struct StoreUpdateMembers {
+        #[key]
+        pub selector: felt252,
+        #[key]
+        pub entity_id: felt252,
+        pub member_selectors: Span<felt252>,
         pub values: Span<felt252>,
     }
 

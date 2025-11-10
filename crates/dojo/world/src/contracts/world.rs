@@ -2,6 +2,7 @@ use std::result::Result;
 
 use starknet::providers::Provider;
 
+pub use super::abigen;
 pub use super::abigen::world::{
     ContractRegistered, ContractUpgraded, Event as WorldEvent, ModelRegistered, WorldContract,
     WorldContractReader,
